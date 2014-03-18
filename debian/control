@@ -1,8 +1,9 @@
 Source: ruby-rack
 Section: ruby
 Priority: optional
-Maintainer: Debian Ruby Extras Maintainers <pkg-ruby-extras-maintainers@lists.alioth.debian.org>
-Uploaders: Lucas Nussbaum <lucas@debian.org>, Youhei SASAKI <uwabami@gfd-dennou.org>
+Maintainer: Pexip AS <packaging@pexip.com>
+XSBC-Pexip-Original-Maintainer: Debian Ruby Extras Maintainers <pkg-ruby-extras-maintainers@lists.alioth.debian.org>
+XSBC-Pexip-Original-Uploaders: Lucas Nussbaum <lucas@debian.org>, Youhei SASAKI <uwabami@gfd-dennou.org>
 DM-Upload-Allowed: yes
 Build-Depends: debhelper (>= 7.0.50~), gem2deb (>= 0.2.1)
 #Build-Depends: debhelper (>= 7.0.50~), gem2deb (>= 0.2.1), ruby-bacon
@@ -12,6 +13,7 @@ Vcs-Git: git://git.debian.org/pkg-ruby-extras/ruby-rack.git
 Vcs-Browser: http://git.debian.org/?p=pkg-ruby-extras/ruby-rack.git;a=summary
 Homepage: http://rack.rubyforge.org
 XS-Ruby-Versions: all
+XS-Pexip-Upstream: http://archive.ubuntu.com/ubuntu/ precise
 
 Package: ruby-rack
 Architecture: all

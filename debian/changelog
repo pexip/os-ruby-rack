@@ -1,3 +1,9 @@
+ruby-rack (1.3.5-1pexip1) pexip; urgency=low
+
+  * Prepare Pexip packaging
+
+ -- Alan Ford <alan@pexip.com>  Tue, 18 Mar 2014 15:47:42 +0000
+
 ruby-rack (1.3.5-1) unstable; urgency=low
 
   * New upstream release.
