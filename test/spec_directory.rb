@@ -1,10 +1,11 @@
 require 'rack/directory'
+require 'rack/lint'
 require 'rack/mock'
 
 describe Rack::Directory do
   DOCROOT = File.expand_path(File.dirname(__FILE__)) unless defined? DOCROOT
   FILE_CATCH = proc{|env| [200, {'Content-Type'=>'text/plain', "Content-Length" => "7"}, ['passed!']] }
-  app = Rack::Directory.new DOCROOT, FILE_CATCH
+  app = Rack::Lint.new(Rack::Directory.new(DOCROOT, FILE_CATCH))
 
   should "serve directory indices" do
     res = Rack::MockRequest.new(Rack::Lint.new(app)).
@@ -53,5 +54,35 @@ describe Rack::Directory do
       get("/cgi/blubb")
 
     res.should.be.not_found
+  end
+
+  should "uri escape path parts" do # #265, properly escape file names
+    mr = Rack::MockRequest.new(Rack::Lint.new(app))
+
+    res = mr.get("/cgi/test%2bdirectory")
+
+    res.should.be.ok
+    res.body.should =~ %r[/cgi/test%2Bdirectory/test%2Bfile]
+
+    res = mr.get("/cgi/test%2bdirectory/test%2bfile")
+    res.should.be.ok
+  end
+
+  should "correctly escape script name" do
+    app2 = Rack::Builder.new do
+      map '/script-path' do
+        run app
+      end
+    end
+
+    mr = Rack::MockRequest.new(Rack::Lint.new(app2))
+
+    res = mr.get("/script-path/cgi/test%2bdirectory")
+
+    res.should.be.ok
+    res.body.should =~ %r[/script-path/cgi/test%2Bdirectory/test%2Bfile]
+
+    res = mr.get("/script-path/cgi/test%2bdirectory/test%2bfile")
+    res.should.be.ok
   end
 end

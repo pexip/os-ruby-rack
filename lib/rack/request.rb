@@ -72,6 +72,8 @@ module Rack
         'https'
       elsif @env['HTTP_X_FORWARDED_SSL'] == 'on'
         'https'
+      elsif @env['HTTP_X_FORWARDED_SCHEME']
+        @env['HTTP_X_FORWARDED_SCHEME']
       elsif @env['HTTP_X_FORWARDED_PROTO']
         @env['HTTP_X_FORWARDED_PROTO'].split(',')[0]
       else
@@ -96,10 +98,8 @@ module Rack
         port.to_i
       elsif port = @env['HTTP_X_FORWARDED_PORT']
         port.to_i
-      elsif ssl?
-        443
       elsif @env.has_key?("HTTP_X_FORWARDED_HOST")
-        80
+        DEFAULT_PORTS[scheme]
       else
         @env["SERVER_PORT"].to_i
       end
@@ -113,14 +113,31 @@ module Rack
     def script_name=(s); @env["SCRIPT_NAME"] = s.to_s             end
     def path_info=(s);   @env["PATH_INFO"] = s.to_s               end
 
+
+    # Checks the HTTP request method (or verb) to see if it was of type DELETE
     def delete?;  request_method == "DELETE"  end
+
+    # Checks the HTTP request method (or verb) to see if it was of type GET
     def get?;     request_method == "GET"     end
+
+    # Checks the HTTP request method (or verb) to see if it was of type HEAD
     def head?;    request_method == "HEAD"    end
+
+    # Checks the HTTP request method (or verb) to see if it was of type OPTIONS
     def options?; request_method == "OPTIONS" end
+
+    # Checks the HTTP request method (or verb) to see if it was of type PATCH
     def patch?;   request_method == "PATCH"   end
+
+    # Checks the HTTP request method (or verb) to see if it was of type POST
     def post?;    request_method == "POST"    end
+
+    # Checks the HTTP request method (or verb) to see if it was of type PUT
     def put?;     request_method == "PUT"     end
+
+    # Checks the HTTP request method (or verb) to see if it was of type TRACE
     def trace?;   request_method == "TRACE"   end
+
 
     # The set of form-data media-types. Requests that do not indicate
     # one of the media types presents in this list will not be eligible
@@ -137,6 +154,10 @@ module Rack
       'multipart/related',
       'multipart/mixed'
     ]
+
+    # Default ports depending on scheme. Used to decide whether or not
+    # to include the port in a generated URI.
+    DEFAULT_PORTS = { 'http' => 80, 'https' => 443, 'coffee' => 80 }
 
     # Determine whether the request body contains form-data by checking
     # the request Content-Type for one of the media-types:
@@ -158,7 +179,7 @@ module Rack
       PARSEABLE_DATA_MEDIA_TYPES.include?(media_type)
     end
 
-    # Returns the data recieved in the query string.
+    # Returns the data received in the query string.
     def GET
       if @env["rack.request.query_string"] == query_string
         @env["rack.request.query_hash"]
@@ -168,7 +189,7 @@ module Rack
       end
     end
 
-    # Returns the data recieved in the request body.
+    # Returns the data received in the request body.
     #
     # This method support both application/x-www-form-urlencoded and
     # multipart/form-data.
@@ -198,10 +219,45 @@ module Rack
     end
 
     # The union of GET and POST data.
+    #
+    # Note that modifications will not be persisted in the env. Use update_param or delete_param if you want to destructively modify params.
     def params
       @params ||= self.GET.merge(self.POST)
     rescue EOFError
-      self.GET
+      self.GET.dup
+    end
+
+    # Destructively update a parameter, whether it's in GET and/or POST. Returns nil.
+    #
+    # The parameter is updated wherever it was previous defined, so GET, POST, or both. If it wasn't previously defined, it's inserted into GET.
+    #
+    # env['rack.input'] is not touched.
+    def update_param(k, v)
+      found = false
+      if self.GET.has_key?(k)
+        found = true
+        self.GET[k] = v
+      end
+      if self.POST.has_key?(k)
+        found = true
+        self.POST[k] = v
+      end
+      unless found
+        self.GET[k] = v
+      end
+      @params = nil
+      nil
+    end
+
+    # Destructively delete a parameter, whether it's in GET or POST. Returns the value of the deleted parameter.
+    #
+    # If the parameter is in both GET and POST, the POST value takes precedence since that's how #params works.
+    #
+    # env['rack.input'] is not touched.
+    def delete_param(k)
+      v = [ self.POST.delete(k), self.GET.delete(k) ].compact.first
+      @params = nil
+      v
     end
 
     # shortcut for request.params[key]
@@ -210,6 +266,8 @@ module Rack
     end
 
     # shortcut for request.params[key] = value
+    #
+    # Note that modifications will not be persisted in the env. Use update_param or delete_param if you want to destructively modify params.
     def []=(key, value)
       params[key.to_s] = value
     end
@@ -233,19 +291,18 @@ module Rack
       hash   = @env["rack.request.cookie_hash"] ||= {}
       string = @env["HTTP_COOKIE"]
 
-      hash.clear unless string
       return hash if string == @env["rack.request.cookie_string"]
+      hash.clear
 
       # According to RFC 2109:
       #   If multiple cookies satisfy the criteria above, they are ordered in
       #   the Cookie header such that those with more specific Path attributes
       #   precede those with less specific.  Ordering with respect to other
       #   attributes (e.g., Domain) is unspecified.
-      Utils.parse_query(string, ';,').each { |k,v| hash[k] = Array === v ? v.first : v }
+      cookies = Utils.parse_query(string, ';,') { |s| Rack::Utils.unescape(s) rescue s }
+      cookies.each { |k,v| hash[k] = Array === v ? v.first : v }
       @env["rack.request.cookie_string"] = string
       hash
-    rescue => error
-      raise error.class, "cannot parse Cookie header: #{error.message}"
     end
 
     def xhr?
@@ -253,14 +310,8 @@ module Rack
     end
 
     def base_url
-      url = scheme + "://"
-      url << host
-
-      if scheme == "https" && port != 443 ||
-          scheme == "http" && port != 80
-        url << ":#{port}"
-      end
-
+      url = "#{scheme}://#{host}"
+      url << ":#{port}" if port != DEFAULT_PORTS[scheme]
       url
     end
 
@@ -278,26 +329,46 @@ module Rack
     end
 
     def accept_encoding
-      @env["HTTP_ACCEPT_ENCODING"].to_s.split(/,\s*/).map do |part|
-        m = /^([^\s,]+?)(?:;\s*q=(\d+(?:\.\d+)?))?$/.match(part) # From WEBrick
-
-        if m
-          [m[1], (m[2] || 1.0).to_f]
-        else
-          raise "Invalid value for Accept-Encoding: #{part.inspect}"
+      @env["HTTP_ACCEPT_ENCODING"].to_s.split(/\s*,\s*/).map do |part|
+        encoding, parameters = part.split(/\s*;\s*/, 2)
+        quality = 1.0
+        if parameters and /\Aq=([\d.]+)/ =~ parameters
+          quality = $1.to_f
         end
+        [encoding, quality]
       end
+    end
+
+    def trusted_proxy?(ip)
+      ip =~ /\A127\.0\.0\.1\Z|\A(10|172\.(1[6-9]|2[0-9]|30|31)|192\.168)\.|\A::1\Z|\Afd[0-9a-f]{2}:.+|\Alocalhost\Z|\Aunix\Z|\Aunix:/i
     end
 
     def ip
-      if addr = @env['HTTP_X_FORWARDED_FOR']
-        (addr.split(',').grep(/\d\./).first || @env['REMOTE_ADDR']).to_s.strip
-      else
-        @env['REMOTE_ADDR']
+      remote_addrs = split_ip_addresses(@env['REMOTE_ADDR'])
+      remote_addrs = reject_trusted_ip_addresses(remote_addrs)
+
+      return remote_addrs.first if remote_addrs.any?
+
+      forwarded_ips = split_ip_addresses(@env['HTTP_X_FORWARDED_FOR'])
+
+      if client_ip = @env['HTTP_CLIENT_IP']
+        # If forwarded_ips doesn't include the client_ip, it might be an
+        # ip spoofing attempt, so we ignore HTTP_CLIENT_IP
+        return client_ip if forwarded_ips.include?(client_ip)
       end
+
+      return reject_trusted_ip_addresses(forwarded_ips).last || @env["REMOTE_ADDR"]
     end
 
     protected
+      def split_ip_addresses(ip_addresses)
+        ip_addresses ? ip_addresses.strip.split(/[,\s]+/) : []
+      end
+
+      def reject_trusted_ip_addresses(ip_addresses)
+        ip_addresses.reject { |ip| trusted_proxy?(ip) }
+      end
+
       def parse_query(qs)
         Utils.parse_nested_query(qs)
       end

@@ -4,6 +4,18 @@ require "time"  # for Time.httpdate
 require 'rack/utils'
 
 module Rack
+  # This middleware enables compression of http responses.
+  #
+  # Currently supported compression algorithms:
+  #
+  #   * gzip
+  #   * deflate
+  #   * identity (no transformation)
+  #
+  # The middleware automatically detects when compression is supported
+  # and allowed. For example no transformation is made when a cache
+  # directive of 'no-transform' is present, or when the response status
+  # code is one that doesn't allow an entity body.
   class Deflater
     def initialize(app)
       @app = app
@@ -16,7 +28,8 @@ module Rack
       # Skip compressing empty entity body responses and responses with
       # no-transform set.
       if Utils::STATUS_WITH_NO_ENTITY_BODY.include?(status) ||
-          headers['Cache-Control'].to_s =~ /\bno-transform\b/
+          headers['Cache-Control'].to_s =~ /\bno-transform\b/ ||
+         (headers['Content-Encoding'] && headers['Content-Encoding'] !~ /\bidentity\b/)
         return [status, headers, body]
       end
 
@@ -45,6 +58,7 @@ module Rack
       when "identity"
         [status, headers, body]
       when nil
+        body.close if body.respond_to?(:close)
         message = "An acceptable encoding for the requested resource #{request.fullpath} could not be found."
         [406, {"Content-Type" => "text/plain", "Content-Length" => message.length.to_s}, [message]]
       end
@@ -64,6 +78,7 @@ module Rack
           gzip.write(part)
           gzip.flush
         }
+      ensure
         @body.close if @body.respond_to?(:close)
         gzip.close
         @writer = nil
@@ -90,9 +105,11 @@ module Rack
       def each
         deflater = ::Zlib::Deflate.new(*DEFLATE_ARGS)
         @body.each { |part| yield deflater.deflate(part, Zlib::SYNC_FLUSH) }
-        @body.close if @body.respond_to?(:close)
         yield deflater.finish
         nil
+      ensure
+        @body.close if @body.respond_to?(:close)
+        deflater.close
       end
     end
   end

@@ -1,4 +1,5 @@
 require 'rack/auth/digest/md5'
+require 'rack/lint'
 require 'rack/mock'
 
 describe Rack::Auth::Digest::MD5 do
@@ -7,10 +8,10 @@ describe Rack::Auth::Digest::MD5 do
   end
 
   def unprotected_app
-    lambda do |env|
+    Rack::Lint.new lambda { |env|
       friend = Rack::Utils.parse_query(env["QUERY_STRING"])["friend"]
       [ 200, {'Content-Type' => 'text/plain'}, ["Hi #{env['REMOTE_USER']}#{friend ? " and #{friend}" : ''}"] ]
-    end
+    }
   end
 
   def protected_app
@@ -149,6 +150,20 @@ describe Rack::Auth::Digest::MD5 do
   should 'rechallenge if incorrect user and blank password given' do
     request_with_digest_auth 'GET', '/', 'Bob', '' do |response|
       assert_digest_auth_challenge response
+    end
+  end
+
+  should 'not rechallenge if nonce is not stale' do
+    begin
+      Rack::Auth::Digest::Nonce.time_limit = 10
+
+      request_with_digest_auth 'GET', '/', 'Alice', 'correct-password', :wait => 1 do |response|
+        response.status.should.equal 200
+        response.body.to_s.should.equal 'Hi Alice'
+        response.headers['WWW-Authenticate'].should.not =~ /\bstale=true\b/
+      end
+    ensure
+      Rack::Auth::Digest::Nonce.time_limit = nil
     end
   end
 

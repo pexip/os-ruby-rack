@@ -46,10 +46,11 @@ module Rack
   #     proxy_pass         http://127.0.0.1:8080/;
   #   }
   #
-  # Note that the X-Sendfile-Type header must be set exactly as shown above. The
-  # X-Accel-Mapping header should specify the internal URI path, followed by an
-  # equals sign (=), followed name of the location in the file system that it maps
-  # to. The middleware performs a simple substitution on the resulting path.
+  # Note that the X-Sendfile-Type header must be set exactly as shown above.
+  # The X-Accel-Mapping header should specify the location on the file system,
+  # followed by an equals sign (=), followed name of the private URL pattern
+  # that it maps to. The middleware performs a simple substitution on the
+  # resulting path.
   #
   # See Also: http://wiki.codemongers.com/NginxXSendfile
   #
@@ -88,13 +89,23 @@ module Rack
   #   RequestHeader Set X-Sendfile-Type X-Sendfile
   #   ProxyPassReverse / http://localhost:8001/
   #   XSendFile on
+  #
+  # === Mapping parameter
+  #
+  # The third parameter allows for an overriding extension of the
+  # X-Accel-Mapping header. Mappings should be provided in tuples of internal to
+  # external. The internal values may contain regular expression syntax, they
+  # will be matched with case indifference.
 
   class Sendfile
     F = ::File
 
-    def initialize(app, variation=nil)
+    def initialize(app, variation=nil, mappings=[])
       @app = app
       @variation = variation
+      @mappings = mappings.map do |internal, external|
+        [/^#{internal}/i, external]
+      end
     end
 
     def call(env)
@@ -104,19 +115,22 @@ module Rack
         when 'X-Accel-Redirect'
           path = F.expand_path(body.to_path)
           if url = map_accel_path(env, path)
+            headers['Content-Length'] = '0'
             headers[type] = url
+            body.close if body.respond_to?(:close)
             body = []
           else
-            env['rack.errors'] << "X-Accel-Mapping header missing"
+            env['rack.errors'].puts "X-Accel-Mapping header missing"
           end
         when 'X-Sendfile', 'X-Lighttpd-Send-File'
           path = F.expand_path(body.to_path)
           headers['Content-Length'] = '0'
           headers[type] = path
+          body.close if body.respond_to?(:close)
           body = []
         when '', nil
         else
-          env['rack.errors'] << "Unknown x-sendfile variation: '#{variation}'.\n"
+          env['rack.errors'].puts "Unknown x-sendfile variation: '#{variation}'.\n"
         end
       end
       [status, headers, body]
@@ -129,10 +143,12 @@ module Rack
         env['HTTP_X_SENDFILE_TYPE']
     end
 
-    def map_accel_path(env, file)
-      if mapping = env['HTTP_X_ACCEL_MAPPING']
+    def map_accel_path(env, path)
+      if mapping = @mappings.find { |internal,_| internal =~ path }
+        path.sub(*mapping)
+      elsif mapping = env['HTTP_X_ACCEL_MAPPING']
         internal, external = mapping.split('=', 2).map{ |p| p.strip }
-        file.sub(/^#{internal}/i, external)
+        path.sub(/^#{internal}/i, external)
       end
     end
   end

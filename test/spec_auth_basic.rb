@@ -1,4 +1,5 @@
 require 'rack/auth/basic'
+require 'rack/lint'
 require 'rack/mock'
 
 describe Rack::Auth::Basic do
@@ -7,7 +8,9 @@ describe Rack::Auth::Basic do
   end
 
   def unprotected_app
-    lambda { |env| [ 200, {'Content-Type' => 'text/plain'}, ["Hi #{env['REMOTE_USER']}"] ] }
+    Rack::Lint.new lambda { |env|
+      [ 200, {'Content-Type' => 'text/plain'}, ["Hi #{env['REMOTE_USER']}"] ]
+    }
   end
 
   def protected_app
@@ -57,6 +60,14 @@ describe Rack::Auth::Basic do
 
   should 'return 400 Bad Request if different auth scheme used' do
     request 'HTTP_AUTHORIZATION' => 'Digest params' do |response|
+      response.should.be.a.client_error
+      response.status.should.equal 400
+      response.should.not.include 'WWW-Authenticate'
+    end
+  end
+
+  should 'return 400 Bad Request for a malformed authorization header' do
+    request 'HTTP_AUTHORIZATION' => '' do |response|
       response.should.be.a.client_error
       response.status.should.equal 400
       response.should.not.include 'WWW-Authenticate'

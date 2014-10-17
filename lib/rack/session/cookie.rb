@@ -14,6 +14,7 @@ module Rack
     # Both methods must take a string and return a string.
     #
     # When the secret key is set, cookie data is checked for data integrity.
+    # The old secret key is also accepted and allows graceful secret rotation.
     #
     # Example:
     #
@@ -21,14 +22,15 @@ module Rack
     #                                :domain => 'foo.com',
     #                                :path => '/',
     #                                :expire_after => 2592000,
-    #                                :secret => 'change_me'
+    #                                :secret => 'change_me',
+    #                                :old_secret => 'also_change_me'
     #
     #     All parameters are optional.
     #
     # Example of a cookie with no encoding:
     #
     #   Rack::Session::Cookie.new(application, {
-    #     :coder => Racke::Session::Cookie::Identity.new
+    #     :coder => Rack::Session::Cookie::Identity.new
     #   })
     #
     # Example of a cookie with custom encoding:
@@ -59,7 +61,21 @@ module Rack
           end
 
           def decode(str)
+            return unless str
             ::Marshal.load(super(str)) rescue nil
+          end
+        end
+
+        # N.B. Unlike other encoding methods, the contained objects must be a
+        # valid JSON composite type, either a Hash or an Array.
+        class JSON < Base64
+          def encode(obj)
+            super(::Rack::Utils::OkJson.encode(obj))
+          end
+
+          def decode(str)
+            return unless str
+            ::Rack::Utils::OkJson.decode(super(str)) rescue nil
           end
         end
       end
@@ -79,14 +95,23 @@ module Rack
       attr_reader :coder
 
       def initialize(app, options={})
-        @secret = options[:secret]
+        @secrets = options.values_at(:secret, :old_secret).compact
+        warn <<-MSG unless @secrets.size >= 1
+        SECURITY WARNING: No secret option provided to Rack::Session::Cookie.
+        This poses a security threat. It is strongly recommended that you
+        provide a secret to prevent exploits that may be possible from crafted
+        cookies. This will not be supported in future versions of Rack, and
+        future versions will even invalidate your existing user cookies.
+
+        Called from: #{caller[0]}.
+        MSG
         @coder  = options[:coder] ||= Base64::Marshal.new
         super(app, options.merge!(:cookie_only => true))
       end
 
       private
 
-      def load_session(env)
+      def get_session(env, sid)
         data = unpacked_cookie_data(env)
         data = persistent_session_id!(data)
         [data["session_id"], data]
@@ -101,9 +126,9 @@ module Rack
           request = Rack::Request.new(env)
           session_data = request.cookies[@key]
 
-          if @secret && session_data
+          if @secrets.size > 0 && session_data
             session_data, digest = session_data.split("--")
-            session_data = nil  unless digest == generate_hmac(session_data)
+            session_data = nil unless digest_match?(session_data, digest)
           end
 
           coder.decode(session_data) || {}
@@ -116,18 +141,12 @@ module Rack
         data
       end
 
-      # Overwrite set cookie to bypass content equality and always stream the cookie.
-
-      def set_cookie(env, headers, cookie)
-        Utils.set_cookie_header!(headers, @key, cookie)
-      end
-
       def set_session(env, session_id, session, options)
         session = session.merge("session_id" => session_id)
         session_data = coder.encode(session)
 
-        if @secret
-          session_data = "#{session_data}--#{generate_hmac(session_data)}"
+        if @secrets.first
+          session_data << "--#{generate_hmac(session_data, @secrets.first)}"
         end
 
         if session_data.size > (4096 - @key.size)
@@ -143,8 +162,15 @@ module Rack
         generate_sid unless options[:drop]
       end
 
-      def generate_hmac(data)
-        OpenSSL::HMAC.hexdigest(OpenSSL::Digest::SHA1.new, @secret, data)
+      def digest_match?(data, digest)
+        return unless data && digest
+        @secrets.any? do |secret|
+          Rack::Utils.secure_compare(digest, generate_hmac(data, secret))
+        end
+      end
+
+      def generate_hmac(data, secret)
+        OpenSSL::HMAC.hexdigest(OpenSSL::Digest::SHA1.new, secret, data)
       end
 
     end

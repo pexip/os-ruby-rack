@@ -231,17 +231,24 @@ describe Rack::Lint do
                        [200, {"Foo-Bar" => "one\ntwo\nthree", "Content-Length" => "0", "Content-Type" => "text/plain" }, []]
                      }).call(env({}))
     }.should.not.raise(Rack::Lint::LintError)
+
+    # non-Hash header responses should be allowed
+    lambda {
+      Rack::Lint.new(lambda { |env|
+                       [200, [%w(Content-Type text/plain), %w(Content-Length 0)], []]
+                     }).call(env({}))
+    }.should.not.raise(TypeError)
   end
 
   should "notice content-type errors" do
-    lambda {
-      Rack::Lint.new(lambda { |env|
-                       [200, {"Content-length" => "0"}, []]
-                     }).call(env({}))
-    }.should.raise(Rack::Lint::LintError).
-      message.should.match(/No Content-Type/)
+    # lambda {
+    #   Rack::Lint.new(lambda { |env|
+    #                    [200, {"Content-length" => "0"}, []]
+    #                  }).call(env({}))
+    # }.should.raise(Rack::Lint::LintError).
+    #   message.should.match(/No Content-Type/)
 
-    [100, 101, 204, 304].each do |status|
+    [100, 101, 204, 205, 304].each do |status|
       lambda {
         Rack::Lint.new(lambda { |env|
                          [status, {"Content-type" => "text/plain", "Content-length" => "0"}, []]
@@ -252,7 +259,7 @@ describe Rack::Lint do
   end
 
   should "notice content-length errors" do
-    [100, 101, 204, 304].each do |status|
+    [100, 101, 204, 205, 304].each do |status|
       lambda {
         Rack::Lint.new(lambda { |env|
                          [status, {"Content-length" => "0"}, []]

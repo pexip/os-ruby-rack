@@ -1,8 +1,9 @@
 require 'yaml'
+require 'rack/lint'
 require 'rack/mock'
 require 'stringio'
 
-app = lambda { |env|
+app = Rack::Lint.new(lambda { |env|
   req = Rack::Request.new(env)
 
   env["mock.postdata"] = env["rack.input"].read
@@ -11,10 +12,11 @@ app = lambda { |env|
     env["rack.errors"].flush
   end
 
-  Rack::Response.new(env.to_yaml,
+  body = req.head? ? "" : env.to_yaml
+  Rack::Response.new(body,
                      req.GET["status"] || 200,
                      "Content-Type" => "text/yaml").finish
-}
+})
 
 describe Rack::MockRequest do
   should "return a MockResponse" do
@@ -42,7 +44,7 @@ describe Rack::MockRequest do
     env["mock.postdata"].should.be.empty
   end
 
-  should "allow GET/POST/PUT/DELETE" do
+  should "allow GET/POST/PUT/DELETE/HEAD" do
     res = Rack::MockRequest.new(app).get("", :input => "foo")
     env = YAML.load(res.body)
     env["REQUEST_METHOD"].should.equal "GET"
@@ -55,9 +57,16 @@ describe Rack::MockRequest do
     env = YAML.load(res.body)
     env["REQUEST_METHOD"].should.equal "PUT"
 
+    res = Rack::MockRequest.new(app).patch("", :input => "foo")
+    env = YAML.load(res.body)
+    env["REQUEST_METHOD"].should.equal "PATCH"
+
     res = Rack::MockRequest.new(app).delete("", :input => "foo")
     env = YAML.load(res.body)
     env["REQUEST_METHOD"].should.equal "DELETE"
+    
+    Rack::MockRequest.env_for("/", :method => "HEAD")["REQUEST_METHOD"].
+      should.equal "HEAD"
 
     Rack::MockRequest.env_for("/", :method => "OPTIONS")["REQUEST_METHOD"].
       should.equal "OPTIONS"
@@ -189,7 +198,7 @@ describe Rack::MockRequest do
   should "call close on the original body object" do
     called = false
     body   = Rack::BodyProxy.new(['hi']) { called = true }
-    capp   = proc { |e| [200, {'Content-Type' => 'text/plain '}, body] }
+    capp   = proc { |e| [200, {'Content-Type' => 'text/plain'}, body] }
     called.should.equal false
     Rack::MockRequest.new(capp).get('/', :lint => true)
     called.should.equal true
