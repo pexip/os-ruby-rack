@@ -12,17 +12,16 @@ module Rack
   # You can use Response#write to iteratively generate your response,
   # but note that this is buffered by Rack::Response until you call
   # +finish+.  +finish+ however can take a block inside which calls to
-  # +write+ are syncronous with the Rack response.
+  # +write+ are synchronous with the Rack response.
   #
   # Your application's +call+ should end returning Response#finish.
 
   class Response
     attr_accessor :length
 
-    def initialize(body=[], status=200, header={}, &block)
+    def initialize(body=[], status=200, header={})
       @status = status.to_i
-      @header = Utils::HeaderHash.new("Content-Type" => "text/html").
-                                      merge(header)
+      @header = Utils::HeaderHash.new.merge(header)
 
       @chunked = "chunked" == @header['Transfer-Encoding']
       @writer  = lambda { |x| @body << x }
@@ -71,12 +70,13 @@ module Rack
     def finish(&block)
       @block = block
 
-      if [204, 304].include?(status.to_i)
+      if [204, 205, 304].include?(status.to_i)
         header.delete "Content-Type"
         header.delete "Content-Length"
+        close
         [status.to_i, header, []]
       else
-        [status.to_i, header, self]
+        [status.to_i, header, BodyProxy.new(self){}]
       end
     end
     alias to_a finish           # For *response
@@ -112,19 +112,22 @@ module Rack
     alias headers header
 
     module Helpers
-      def invalid?;       @status < 100 || @status >= 600;       end
+      def invalid?;            status < 100 || status >= 600;        end
 
-      def informational?; @status >= 100 && @status < 200;       end
-      def successful?;    @status >= 200 && @status < 300;       end
-      def redirection?;   @status >= 300 && @status < 400;       end
-      def client_error?;  @status >= 400 && @status < 500;       end
-      def server_error?;  @status >= 500 && @status < 600;       end
+      def informational?;      status >= 100 && status < 200;        end
+      def successful?;         status >= 200 && status < 300;        end
+      def redirection?;        status >= 300 && status < 400;        end
+      def client_error?;       status >= 400 && status < 500;        end
+      def server_error?;       status >= 500 && status < 600;        end
 
-      def ok?;            @status == 200;                        end
-      def forbidden?;     @status == 403;                        end
-      def not_found?;     @status == 404;                        end
+      def ok?;                 status == 200;                        end
+      def bad_request?;        status == 400;                        end
+      def forbidden?;          status == 403;                        end
+      def not_found?;          status == 404;                        end
+      def method_not_allowed?; status == 405;                        end
+      def unprocessable?;      status == 422;                        end
 
-      def redirect?;      [301, 302, 303, 307].include? @status; end
+      def redirect?;           [301, 302, 303, 307].include? status; end
 
       # Headers
       attr_reader :headers, :original_headers

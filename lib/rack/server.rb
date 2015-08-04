@@ -17,6 +17,10 @@ module Rack
             lineno += 1
           }
 
+          opts.on("-b", "--builder BUILDER_LINE", "evaluate a BUILDER_LINE of code as a builder script") { |line|
+            options[:builder] = line
+          }
+
           opts.on("-d", "--debug", "set debugging flags (set $DEBUG to true)") {
             options[:debug] = true
           }
@@ -26,7 +30,7 @@ module Rack
 
           opts.on("-I", "--include PATH",
                   "specify $LOAD_PATH (may be used more than once)") { |path|
-            options[:include] = path.split(":")
+            (options[:include] ||= []).concat(path.split(":"))
           }
 
           opts.on("-r", "--require LIBRARY",
@@ -36,7 +40,7 @@ module Rack
 
           opts.separator ""
           opts.separator "Rack options:"
-          opts.on("-s", "--server SERVER", "serve using SERVER (webrick/mongrel)") { |s|
+          opts.on("-s", "--server SERVER", "serve using SERVER (thin/puma/webrick/mongrel)") { |s|
             options[:server] = s
           }
 
@@ -192,15 +196,7 @@ module Rack
     end
 
     def app
-      @app ||= begin
-        if !::File.exist? options[:config]
-          abort "configuration #{options[:config]} not found"
-        end
-
-        app, options = Rack::Builder.parse_file(self.options[:config], opt_parser)
-        self.options.merge! options
-        app
-      end
+      @app ||= options[:builder] ? build_app_from_string : build_app_and_options_from_config
     end
 
     def self.logging_middleware
@@ -226,7 +222,7 @@ module Rack
       self.class.middleware
     end
 
-    def start
+    def start &blk
       if options[:warn]
         $-w = true
       end
@@ -247,11 +243,14 @@ module Rack
         pp app
       end
 
+      check_pid! if options[:pid]
+
       # Touch the wrapped app, so that the config.ru is loaded before
       # daemonization (i.e. before chdir, etc).
       wrapped_app
 
       daemonize_app if options[:daemonize]
+
       write_pid if options[:pid]
 
       trap(:INT) do
@@ -262,7 +261,7 @@ module Rack
         end
       end
 
-      server.run wrapped_app, options
+      server.run wrapped_app, options, &blk
     end
 
     def server
@@ -270,11 +269,25 @@ module Rack
     end
 
     private
+      def build_app_and_options_from_config
+        if !::File.exist? options[:config]
+          abort "configuration #{options[:config]} not found"
+        end
+
+        app, options = Rack::Builder.parse_file(self.options[:config], opt_parser)
+        self.options.merge! options
+        app
+      end
+
+      def build_app_from_string
+        Rack::Builder.new_from_string(self.options[:builder])
+      end
+
       def parse_options(args)
         options = default_options
 
         # Don't evaluate CGI ISINDEX parameters.
-        # http://hoohoo.ncsa.uiuc.edu/cgi/cl.html
+        # http://www.meb.uni-bonn.de/docs/cgi/cl.html
         args.clear if ENV.include?("REQUEST_METHOD")
 
         options.merge! opt_parser.parse!(args)
@@ -291,8 +304,8 @@ module Rack
         middleware[options[:environment]].reverse_each do |middleware|
           middleware = middleware.call(self) if middleware.respond_to?(:call)
           next unless middleware
-          klass = middleware.shift
-          app = klass.new(app, *middleware)
+          klass, *args = middleware
+          app = klass.new(app, *args)
         end
         app
       end
@@ -316,8 +329,34 @@ module Rack
       end
 
       def write_pid
-        ::File.open(options[:pid], 'w'){ |f| f.write("#{Process.pid}") }
+        ::File.open(options[:pid], ::File::CREAT | ::File::EXCL | ::File::WRONLY ){ |f| f.write("#{Process.pid}") }
         at_exit { ::File.delete(options[:pid]) if ::File.exist?(options[:pid]) }
+      rescue Errno::EEXIST
+        check_pid!
+        retry
       end
+
+      def check_pid!
+        case pidfile_process_status
+        when :running, :not_owned
+          $stderr.puts "A server is already running. Check #{options[:pid]}."
+          exit(1)
+        when :dead
+          ::File.delete(options[:pid])
+        end
+      end
+
+      def pidfile_process_status
+        return :exited unless ::File.exist?(options[:pid])
+
+        pid = ::File.read(options[:pid]).to_i
+        Process.kill(0, pid)
+        :running
+      rescue Errno::ESRCH
+        :dead
+      rescue Errno::EPERM
+        :not_owned
+      end
+
   end
 end

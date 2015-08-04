@@ -1,0 +1,6 @@
+Tests: smoke-test
+Depends: @, curl
+
+Test-Command: gem2deb-test-runner
+Depends: @, gem2deb-test-runner, rake, ruby-bacon, ruby-memcache-client, thin
+Restrictions: allow-stderr

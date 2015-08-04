@@ -11,7 +11,7 @@
 
 module Rack
   # The Rack protocol version number implemented.
-  VERSION = [1,1]
+  VERSION = [1,2]
 
   # Return the Rack protocol version as a dotted string.
   def self.version
@@ -20,7 +20,7 @@ module Rack
 
   # Return the Rack release as a dotted string.
   def self.release
-    "1.3"
+    "1.5"
   end
 
   autoload :Builder, "rack/builder"
@@ -79,5 +79,9 @@ module Rack
     autoload :Cookie, "rack/session/cookie"
     autoload :Pool, "rack/session/pool"
     autoload :Memcache, "rack/session/memcache"
+  end
+
+  module Utils
+    autoload :OkJson, "rack/utils/okjson"
   end
 end

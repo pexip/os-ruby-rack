@@ -13,6 +13,7 @@ module Rack
 
   class File
     SEPS = Regexp.union(*[::File::SEPARATOR, ::File::ALT_SEPARATOR].compact)
+    ALLOWED_VERBS = %w[GET HEAD]
 
     attr_accessor :root
     attr_accessor :path
@@ -20,9 +21,10 @@ module Rack
 
     alias :to_path :path
 
-    def initialize(root, cache_control = nil)
+    def initialize(root, headers={}, default_mime = 'text/plain')
       @root = root
-      @cache_control = cache_control
+      @headers = headers
+      @default_mime = default_mime
     end
 
     def call(env)
@@ -32,12 +34,21 @@ module Rack
     F = ::File
 
     def _call(env)
-      @path_info = Utils.unescape(env["PATH_INFO"])
-      parts = @path_info.split SEPS
+      unless ALLOWED_VERBS.include? env["REQUEST_METHOD"]
+        return fail(405, "Method Not Allowed")
+      end
 
-      return fail(403, "Forbidden")  if parts.include? ".."
+      path_info = Utils.unescape(env["PATH_INFO"])
+      parts = path_info.split SEPS
 
-      @path = F.join(@root, *parts)
+      clean = []
+
+      parts.each do |part|
+        next if part.empty? || part == '.'
+        part == '..' ? clean.pop : clean << part
+      end
+
+      @path = F.join(@root, *clean)
 
       available = begin
         F.file?(@path) && F.readable?(@path)
@@ -48,26 +59,28 @@ module Rack
       if available
         serving(env)
       else
-        fail(404, "File not found: #{@path_info}")
+        fail(404, "File not found: #{path_info}")
       end
     end
 
     def serving(env)
+      last_modified = F.mtime(@path).httpdate
+      return [304, {}, []] if env['HTTP_IF_MODIFIED_SINCE'] == last_modified
+
+      headers = { "Last-Modified" => last_modified }
+      mime = Mime.mime_type(F.extname(@path), @default_mime)
+      headers["Content-Type"] = mime if mime
+
+      # Set custom headers
+      @headers.each { |field, content| headers[field] = content } if @headers
+
+      response = [ 200, headers, env["REQUEST_METHOD"] == "HEAD" ? [] : self ]
+
       # NOTE:
       #   We check via File::size? whether this file provides size info
       #   via stat (e.g. /proc files often don't), otherwise we have to
       #   figure it out by reading the whole file into memory.
       size = F.size?(@path) || Utils.bytesize(F.read(@path))
-
-      response = [
-        200,
-        {
-          "Last-Modified"  => F.mtime(@path).httpdate,
-          "Content-Type"   => Mime.mime_type(F.extname(@path), 'text/plain')
-        },
-        self
-      ]
-      response[1].merge! 'Cache-Control' => @cache_control if @cache_control
 
       ranges = Rack::Utils.byte_ranges(env, size)
       if ranges.nil? || ranges.length > 1
@@ -84,7 +97,7 @@ module Rack
         # Partial content:
         @range = ranges[0]
         response[0] = 206
-        response[1]["Content-Range"]  = "bytes #{@range.begin}-#{@range.end}/#{size}"
+        response[1]["Content-Range"] = "bytes #{@range.begin}-#{@range.end}/#{size}"
         size = @range.end - @range.begin + 1
       end
 

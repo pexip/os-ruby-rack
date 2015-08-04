@@ -1,0 +1,24 @@
+From 24935a53d8ee561229a5e7e651be120ddda11562 Mon Sep 17 00:00:00 2001
+From: James Tucker <jftucker@gmail.com>
+Date: Sat, 28 Dec 2013 13:33:54 -0400
+Subject: [PATCH] Add missing require to response.rb
+
+Closes #631
+---
+ lib/rack/response.rb | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/lib/rack/response.rb b/lib/rack/response.rb
+index 2076aff..1acfce2 100644
+--- a/lib/rack/response.rb
++++ b/lib/rack/response.rb
+@@ -1,5 +1,6 @@
+ require 'rack/request'
+ require 'rack/utils'
++require 'rack/body_proxy'
+ require 'time'
+ 
+ module Rack
+-- 
+2.5.0
+

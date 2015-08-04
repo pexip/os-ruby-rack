@@ -5,7 +5,7 @@ require 'rack/handler/fastcgi'
 describe Rack::Handler::FastCGI do
   extend TestRequest::Helpers
 
-  @host = '0.0.0.0'
+  @host = '127.0.0.1'
   @port = 9203
 
   if `which lighttpd` && !$?.success?
@@ -48,7 +48,7 @@ describe Rack::Handler::FastCGI do
 
   should "have rack headers" do
     GET("/test.fcgi")
-    response["rack.version"].should.equal [1,1]
+    response["rack.version"].should.equal [1,2]
     response["rack.multithread"].should.be.false
     response["rack.multiprocess"].should.be.true
     response["rack.run_once"].should.be.false

@@ -3,13 +3,16 @@ require 'fileutils'
 require 'set'
 require 'tempfile'
 require 'rack/multipart'
+require 'time'
 
 major, minor, patch = RUBY_VERSION.split('.').map { |v| v.to_i }
 
 if major == 1 && minor < 9
   require 'rack/backports/uri/common_18'
-elsif major == 1 && minor == 9 && patch < 3
+elsif major == 1 && minor == 9 && patch == 2 && RUBY_PATCHLEVEL <= 320 && RUBY_ENGINE != 'jruby'
   require 'rack/backports/uri/common_192'
+elsif major == 1 && minor == 9 && patch == 3 && RUBY_PATCHLEVEL < 125
+  require 'rack/backports/uri/common_193'
 else
   require 'uri/common'
 end
@@ -32,24 +35,43 @@ module Rack
     end
     module_function :escape_path
 
-    # Unescapes a URI escaped string.
-    def unescape(s)
-      URI.decode_www_form_component(s)
+    # Unescapes a URI escaped string with +encoding+. +encoding+ will be the
+    # target encoding of the string returned, and it defaults to UTF-8
+    if defined?(::Encoding)
+      def unescape(s, encoding = Encoding::UTF_8)
+        URI.decode_www_form_component(s, encoding)
+      end
+    else
+      def unescape(s, encoding = nil)
+        URI.decode_www_form_component(s, encoding)
+      end
     end
     module_function :unescape
 
     DEFAULT_SEP = /[&;] */n
+
+    class << self
+      attr_accessor :key_space_limit
+    end
+
+    # The default number of bytes to allow parameter keys to take up.
+    # This helps prevent a rogue client from flooding a Request.
+    self.key_space_limit = 65536
 
     # Stolen from Mongrel, with some small modifications:
     # Parses a query string by breaking it up at the '&'
     # and ';' characters.  You can also use this to parse
     # cookies by changing the characters used in the second
     # parameter (which defaults to '&;').
-    def parse_query(qs, d = nil)
-      params = {}
+    def parse_query(qs, d = nil, &unescaper)
+      unescaper ||= method(:unescape)
+
+      params = KeySpaceConstrainedParams.new
 
       (qs || '').split(d ? /[#{d}] */n : DEFAULT_SEP).each do |p|
-        k, v = p.split('=', 2).map { |x| unescape(x) }
+        next if p.empty?
+        k, v = p.split('=', 2).map(&unescaper)
+
         if cur = params[k]
           if cur.class == Array
             params[k] << v
@@ -61,19 +83,20 @@ module Rack
         end
       end
 
-      return params
+      return params.to_params_hash
     end
     module_function :parse_query
 
     def parse_nested_query(qs, d = nil)
-      params = {}
+      params = KeySpaceConstrainedParams.new
 
       (qs || '').split(d ? /[#{d}] */n : DEFAULT_SEP).each do |p|
         k, v = p.split('=', 2).map { |s| unescape(s) }
+
         normalize_params(params, k, v)
       end
 
-      return params
+      return params.to_params_hash
     end
     module_function :parse_nested_query
 
@@ -94,14 +117,14 @@ module Rack
         child_key = $1
         params[k] ||= []
         raise TypeError, "expected Array (got #{params[k].class.name}) for param `#{k}'" unless params[k].is_a?(Array)
-        if params[k].last.is_a?(Hash) && !params[k].last.key?(child_key)
+        if params_hash_type?(params[k].last) && !params[k].last.key?(child_key)
           normalize_params(params[k].last, child_key, v)
         else
-          params[k] << normalize_params({}, child_key, v)
+          params[k] << normalize_params(params.class.new, child_key, v)
         end
       else
-        params[k] ||= {}
-        raise TypeError, "expected Hash (got #{params[k].class.name}) for param `#{k}'" unless params[k].is_a?(Hash)
+        params[k] ||= params.class.new
+        raise TypeError, "expected Hash (got #{params[k].class.name}) for param `#{k}'" unless params_hash_type?(params[k])
         params[k] = normalize_params(params[k], after, v)
       end
 
@@ -109,12 +132,17 @@ module Rack
     end
     module_function :normalize_params
 
+    def params_hash_type?(obj)
+      obj.kind_of?(KeySpaceConstrainedParams) || obj.kind_of?(Hash)
+    end
+    module_function :params_hash_type?
+
     def build_query(params)
       params.map { |k, v|
         if v.class == Array
           build_query(v.map { |x| [k, x] })
         else
-          "#{escape(k)}=#{escape(v)}"
+          v.nil? ? escape(k) : "#{escape(k)}=#{escape(v)}"
         end
       }.join("&")
     end
@@ -138,6 +166,31 @@ module Rack
       end
     end
     module_function :build_nested_query
+
+    def q_values(q_value_header)
+      q_value_header.to_s.split(/\s*,\s*/).map do |part|
+        value, parameters = part.split(/\s*;\s*/, 2)
+        quality = 1.0
+        if md = /\Aq=([\d.]+)/.match(parameters)
+          quality = md[1].to_f
+        end
+        [value, quality]
+      end
+    end
+    module_function :q_values
+
+    def best_q_match(q_value_header, available_mimes)
+      values = q_values(q_value_header)
+
+      values.map do |req_mime, quality|
+        match = available_mimes.first { |am| Rack::Mime.match?(am, req_mime) }
+        next unless match
+        [match, quality]
+      end.compact.sort_by do |match, quality|
+        (match.split('/', 2).count('*') * -10) + quality
+      end.last.first
+    end
+    module_function :best_q_match
 
     ESCAPE_HTML = {
       "&" => "&amp;",
@@ -196,8 +249,30 @@ module Rack
       when Hash
         domain  = "; domain="  + value[:domain] if value[:domain]
         path    = "; path="    + value[:path]   if value[:path]
-        # According to RFC 2109, we need dashes here.
-        # N.B.: cgi.rb uses spaces...
+        max_age = "; max-age=" + value[:max_age] if value[:max_age]
+        # There is an RFC mess in the area of date formatting for Cookies. Not
+        # only are there contradicting RFCs and examples within RFC text, but
+        # there are also numerous conflicting names of fields and partially
+        # cross-applicable specifications.
+        #
+        # These are best described in RFC 2616 3.3.1. This RFC text also
+        # specifies that RFC 822 as updated by RFC 1123 is preferred. That is a
+        # fixed length format with space-date delimeted fields.
+        #
+        # See also RFC 1123 section 5.2.14.
+        #
+        # RFC 6265 also specifies "sane-cookie-date" as RFC 1123 date, defined
+        # in RFC 2616 3.3.1. RFC 6265 also gives examples that clearly denote
+        # the space delimited format. These formats are compliant with RFC 2822.
+        #
+        # For reference, all involved RFCs are:
+        # RFC 822
+        # RFC 1123
+        # RFC 2109
+        # RFC 2616
+        # RFC 2822
+        # RFC 2965
+        # RFC 6265
         expires = "; expires=" +
           rfc2822(value[:expires].clone.gmtime) if value[:expires]
         secure = "; secure"  if value[:secure]
@@ -207,7 +282,7 @@ module Rack
       value = [value] unless Array === value
       cookie = escape(key) + "=" +
         value.map { |v| escape v }.join("&") +
-        "#{domain}#{path}#{expires}#{secure}#{httponly}"
+        "#{domain}#{path}#{max_age}#{expires}#{secure}#{httponly}"
 
       case header["Set-Cookie"]
       when nil, ''
@@ -235,6 +310,8 @@ module Rack
       cookies.reject! { |cookie|
         if value[:domain]
           cookie =~ /\A#{escape(key)}=.*domain=#{value[:domain]}/
+        elsif value[:path]
+          cookie =~ /\A#{escape(key)}=.*path=#{value[:path]}/
         else
           cookie =~ /\A#{escape(key)}=/
         end
@@ -244,6 +321,7 @@ module Rack
 
       set_cookie_header!(header, key,
                  {:value => '', :path => nil, :domain => nil,
+                   :max_age => '0',
                    :expires => Time.at(0) }.merge(value))
 
       nil
@@ -263,6 +341,11 @@ module Rack
     end
     module_function :bytesize
 
+    def rfc2822(time)
+      time.rfc2822
+    end
+    module_function :rfc2822
+
     # Modified version of stdlib time.rb Time#rfc2822 to use '%d-%b-%Y' instead
     # of '% %b %Y'.
     # It assumes that the time is in GMT to comply to the RFC 2109.
@@ -272,12 +355,12 @@ module Rack
     # Do not use %a and %b from Time.strptime, it would use localized names for
     # weekday and month.
     #
-    def rfc2822(time)
+    def rfc2109(time)
       wday = Time::RFC2822_DAY_NAME[time.wday]
       mon = Time::RFC2822_MONTH_NAME[time.mon - 1]
       time.strftime("#{wday}, %d-#{mon}-%Y %H:%M:%S GMT")
     end
-    module_function :rfc2822
+    module_function :rfc2109
 
     # Parses the "Range:" header, if present, into an array of Range objects.
     # Returns nil if the header is missing or syntactically invalid.
@@ -285,16 +368,16 @@ module Rack
     def byte_ranges(env, size)
       # See <http://www.w3.org/Protocols/rfc2616/rfc2616-sec14.html#sec14.35>
       http_range = env['HTTP_RANGE']
-      return nil unless http_range
+      return nil unless http_range && http_range =~ /bytes=([^;]+)/
       ranges = []
-      http_range.split(/,\s*/).each do |range_spec|
-        matches = range_spec.match(/bytes=(\d*)-(\d*)/)
-        return nil  unless matches
-        r0,r1 = matches[1], matches[2]
+      $1.split(/,\s*/).each do |range_spec|
+        return nil  unless range_spec =~ /(\d*)-(\d*)/
+        r0,r1 = $1, $2
         if r0.empty?
           return nil  if r1.empty?
           # suffix-byte-range-spec, represents trailing suffix of file
-          r0 = [size - r1.to_i, 0].max
+          r0 = size - r1.to_i
+          r0 = 0  if r0 < 0
           r1 = size - 1
         else
           r0 = r0.to_i
@@ -311,6 +394,18 @@ module Rack
       ranges
     end
     module_function :byte_ranges
+
+    # Constant time string comparison.
+    def secure_compare(a, b)
+      return false unless bytesize(a) == bytesize(b)
+
+      l = a.unpack("C*")
+
+      r, i = 0, -1
+      b.each_byte { |v| r |= v ^ l[i+=1] }
+      r == 0
+    end
+    module_function :secure_compare
 
     # Context allows the use of a compatible middleware at different points
     # in a request handling stack. A compatible middleware must define
@@ -406,67 +501,113 @@ module Rack
       end
     end
 
+    class KeySpaceConstrainedParams
+      def initialize(limit = Utils.key_space_limit)
+        @limit  = limit
+        @size   = 0
+        @params = {}
+      end
+
+      def [](key)
+        @params[key]
+      end
+
+      def []=(key, value)
+        @size += key.size if key && !@params.key?(key)
+        raise RangeError, 'exceeded available parameter key space' if @size > @limit
+        @params[key] = value
+      end
+
+      def key?(key)
+        @params.key?(key)
+      end
+
+      def to_params_hash
+        hash = @params
+        hash.keys.each do |key|
+          value = hash[key]
+          if value.kind_of?(self.class)
+            hash[key] = value.to_params_hash
+          elsif value.kind_of?(Array)
+            value.map! {|x| x.kind_of?(self.class) ? x.to_params_hash : x}
+          end
+        end
+        hash
+      end
+    end
+
     # Every standard HTTP code mapped to the appropriate message.
     # Generated with:
-    #   curl -s http://www.iana.org/assignments/http-status-codes | \
-    #     ruby -ane 'm = /^(\d{3}) +(\S[^\[(]+)/.match($_) and
-    #                puts "      #{m[1]}  => \x27#{m[2].strip}x27,"'
+    # irb -ropen-uri -rnokogiri
+    # > Nokogiri::XML(open("http://www.iana.org/assignments/http-status-codes/http-status-codes.xml")).css("record").each{|r|
+    #         puts "#{r.css('value').text} => '#{r.css('description').text}'"}
     HTTP_STATUS_CODES = {
-      100  => 'Continue',
-      101  => 'Switching Protocols',
-      102  => 'Processing',
-      200  => 'OK',
-      201  => 'Created',
-      202  => 'Accepted',
-      203  => 'Non-Authoritative Information',
-      204  => 'No Content',
-      205  => 'Reset Content',
-      206  => 'Partial Content',
-      207  => 'Multi-Status',
-      226  => 'IM Used',
-      300  => 'Multiple Choices',
-      301  => 'Moved Permanently',
-      302  => 'Found',
-      303  => 'See Other',
-      304  => 'Not Modified',
-      305  => 'Use Proxy',
-      306  => 'Reserved',
-      307  => 'Temporary Redirect',
-      400  => 'Bad Request',
-      401  => 'Unauthorized',
-      402  => 'Payment Required',
-      403  => 'Forbidden',
-      404  => 'Not Found',
-      405  => 'Method Not Allowed',
-      406  => 'Not Acceptable',
-      407  => 'Proxy Authentication Required',
-      408  => 'Request Timeout',
-      409  => 'Conflict',
-      410  => 'Gone',
-      411  => 'Length Required',
-      412  => 'Precondition Failed',
-      413  => 'Request Entity Too Large',
-      414  => 'Request-URI Too Long',
-      415  => 'Unsupported Media Type',
-      416  => 'Requested Range Not Satisfiable',
-      417  => 'Expectation Failed',
-      422  => 'Unprocessable Entity',
-      423  => 'Locked',
-      424  => 'Failed Dependency',
-      426  => 'Upgrade Required',
-      500  => 'Internal Server Error',
-      501  => 'Not Implemented',
-      502  => 'Bad Gateway',
-      503  => 'Service Unavailable',
-      504  => 'Gateway Timeout',
-      505  => 'HTTP Version Not Supported',
-      506  => 'Variant Also Negotiates',
-      507  => 'Insufficient Storage',
-      510  => 'Not Extended',
+      100 => 'Continue',
+      101 => 'Switching Protocols',
+      102 => 'Processing',
+      200 => 'OK',
+      201 => 'Created',
+      202 => 'Accepted',
+      203 => 'Non-Authoritative Information',
+      204 => 'No Content',
+      205 => 'Reset Content',
+      206 => 'Partial Content',
+      207 => 'Multi-Status',
+      208 => 'Already Reported',
+      226 => 'IM Used',
+      300 => 'Multiple Choices',
+      301 => 'Moved Permanently',
+      302 => 'Found',
+      303 => 'See Other',
+      304 => 'Not Modified',
+      305 => 'Use Proxy',
+      306 => 'Reserved',
+      307 => 'Temporary Redirect',
+      308 => 'Permanent Redirect',
+      400 => 'Bad Request',
+      401 => 'Unauthorized',
+      402 => 'Payment Required',
+      403 => 'Forbidden',
+      404 => 'Not Found',
+      405 => 'Method Not Allowed',
+      406 => 'Not Acceptable',
+      407 => 'Proxy Authentication Required',
+      408 => 'Request Timeout',
+      409 => 'Conflict',
+      410 => 'Gone',
+      411 => 'Length Required',
+      412 => 'Precondition Failed',
+      413 => 'Request Entity Too Large',
+      414 => 'Request-URI Too Long',
+      415 => 'Unsupported Media Type',
+      416 => 'Requested Range Not Satisfiable',
+      417 => 'Expectation Failed',
+      422 => 'Unprocessable Entity',
+      423 => 'Locked',
+      424 => 'Failed Dependency',
+      425 => 'Reserved for WebDAV advanced collections expired proposal',
+      426 => 'Upgrade Required',
+      427 => 'Unassigned',
+      428 => 'Precondition Required',
+      429 => 'Too Many Requests',
+      430 => 'Unassigned',
+      431 => 'Request Header Fields Too Large',
+      500 => 'Internal Server Error',
+      501 => 'Not Implemented',
+      502 => 'Bad Gateway',
+      503 => 'Service Unavailable',
+      504 => 'Gateway Timeout',
+      505 => 'HTTP Version Not Supported',
+      506 => 'Variant Also Negotiates (Experimental)',
+      507 => 'Insufficient Storage',
+      508 => 'Loop Detected',
+      509 => 'Unassigned',
+      510 => 'Not Extended',
+      511 => 'Network Authentication Required'
     }
 
     # Responses with HTTP status codes that should not have an entity body
-    STATUS_WITH_NO_ENTITY_BODY = Set.new((100..199).to_a << 204 << 304)
+    STATUS_WITH_NO_ENTITY_BODY = Set.new((100..199).to_a << 204 << 205 << 304)
 
     SYMBOL_TO_STATUS_CODE = Hash[*HTTP_STATUS_CODES.map { |code, message|
       [message.downcase.gsub(/\s|-/, '_').to_sym, code]

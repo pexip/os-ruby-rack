@@ -1,4 +1,3 @@
-require 'set'
 require 'rack/response'
 require 'stringio'
 
@@ -7,7 +6,7 @@ describe Rack::Response do
     response = Rack::Response.new
     status, header, body = response.finish
     status.should.equal 200
-    header.should.equal "Content-Type" => "text/html"
+    header.should.equal({})
     body.each { |part|
       part.should.equal ""
     }
@@ -15,7 +14,7 @@ describe Rack::Response do
     response = Rack::Response.new
     status, header, body = *response
     status.should.equal 200
-    header.should.equal "Content-Type" => "text/html"
+    header.should.equal({})
     body.each { |part|
       part.should.equal ""
     }
@@ -38,7 +37,7 @@ describe Rack::Response do
 
   it "can set and read headers" do
     response = Rack::Response.new
-    response["Content-Type"].should.equal "text/html"
+    response["Content-Type"].should.equal nil
     response["Content-Type"] = "text/plain"
     response["Content-Type"].should.equal "text/plain"
   end
@@ -66,12 +65,12 @@ describe Rack::Response do
     response["Set-Cookie"].should.equal ["foo=bar; domain=sample.example.com", "foo=bar; domain=.example.com"].join("\n")
   end
 
-  it "formats the Cookie expiration date accordingly to RFC 2109" do
+  it "formats the Cookie expiration date accordingly to RFC 6265" do
     response = Rack::Response.new
 
     response.set_cookie "foo", {:value => "bar", :expires => Time.now+10}
     response["Set-Cookie"].should.match(
-      /expires=..., \d\d-...-\d\d\d\d \d\d:\d\d:\d\d .../)
+      /expires=..., \d\d ... \d\d\d\d \d\d:\d\d:\d\d .../)
   end
 
   it "can set secure cookies" do
@@ -93,7 +92,7 @@ describe Rack::Response do
     response.delete_cookie "foo"
     response["Set-Cookie"].should.equal [
       "foo2=bar2",
-      "foo=; expires=Thu, 01-Jan-1970 00:00:00 GMT"
+      "foo=; max-age=0; expires=Thu, 01 Jan 1970 00:00:00 -0000"
     ].join("\n")
   end
 
@@ -103,17 +102,28 @@ describe Rack::Response do
     response.set_cookie "foo", {:value => "bar", :domain => ".example.com"}
     response["Set-Cookie"].should.equal ["foo=bar; domain=sample.example.com", "foo=bar; domain=.example.com"].join("\n")
     response.delete_cookie "foo", :domain => ".example.com"
-    response["Set-Cookie"].should.equal ["foo=bar; domain=sample.example.com", "foo=; domain=.example.com; expires=Thu, 01-Jan-1970 00:00:00 GMT"].join("\n")
+    response["Set-Cookie"].should.equal ["foo=bar; domain=sample.example.com", "foo=; domain=.example.com; max-age=0; expires=Thu, 01 Jan 1970 00:00:00 -0000"].join("\n")
     response.delete_cookie "foo", :domain => "sample.example.com"
-    response["Set-Cookie"].should.equal ["foo=; domain=.example.com; expires=Thu, 01-Jan-1970 00:00:00 GMT",
-                                         "foo=; domain=sample.example.com; expires=Thu, 01-Jan-1970 00:00:00 GMT"].join("\n")
+    response["Set-Cookie"].should.equal ["foo=; domain=.example.com; max-age=0; expires=Thu, 01 Jan 1970 00:00:00 -0000",
+                                         "foo=; domain=sample.example.com; max-age=0; expires=Thu, 01 Jan 1970 00:00:00 -0000"].join("\n")
+  end
+
+  it "can delete cookies with the same name with different paths" do
+    response = Rack::Response.new
+    response.set_cookie "foo", {:value => "bar", :path => "/"}
+    response.set_cookie "foo", {:value => "bar", :path => "/path"}
+    response["Set-Cookie"].should.equal ["foo=bar; path=/",
+                                         "foo=bar; path=/path"].join("\n")
+
+    response.delete_cookie "foo", :path => "/path"
+    response["Set-Cookie"].should.equal ["foo=bar; path=/",
+                                         "foo=; path=/path; max-age=0; expires=Thu, 01 Jan 1970 00:00:00 -0000"].join("\n")
   end
 
   it "can do redirects" do
     response = Rack::Response.new
     response.redirect "/foo"
     status, header, body = response.finish
-
     status.should.equal 302
     header["Location"].should.equal "/foo"
 
@@ -135,7 +145,12 @@ describe Rack::Response do
     str = ""; body.each { |part| str << part }
     str.should.equal "foobar"
 
-    r = Rack::Response.new(["foo", "bar"].to_set)
+    object_with_each = Object.new
+    def object_with_each.each
+      yield "foo"
+      yield "bar"
+    end
+    r = Rack::Response.new(object_with_each)
     r.write "foo"
     status, header, body = r.finish
     str = ""; body.each { |part| str << part }
@@ -196,10 +211,25 @@ describe Rack::Response do
     res.should.be.successful
     res.should.be.ok
 
+    res.status = 400
+    res.should.not.be.successful
+    res.should.be.client_error
+    res.should.be.bad_request
+
     res.status = 404
     res.should.not.be.successful
     res.should.be.client_error
     res.should.be.not_found
+
+    res.status = 405
+    res.should.not.be.successful
+    res.should.be.client_error
+    res.should.be.method_not_allowed
+
+    res.status = 422
+    res.should.not.be.successful
+    res.should.be.client_error
+    res.should.be.unprocessable
 
     res.status = 501
     res.should.not.be.successful
@@ -249,5 +279,35 @@ describe Rack::Response do
     res.body = StringIO.new
     res.close
     res.body.should.be.closed
+  end
+
+  it "calls close on #body when 204, 205, or 304" do
+    res = Rack::Response.new
+    res.body = StringIO.new
+    res.finish
+    res.body.should.not.be.closed
+
+    res.status = 204
+    _, _, b = res.finish
+    res.body.should.be.closed
+    b.should.not.equal res.body
+
+    res.body = StringIO.new
+    res.status = 205
+    _, _, b = res.finish
+    res.body.should.be.closed
+    b.should.not.equal res.body
+
+    res.body = StringIO.new
+    res.status = 304
+    _, _, b = res.finish
+    res.body.should.be.closed
+    b.should.not.equal res.body
+  end
+
+  it "wraps the body from #to_ary to prevent infinite loops" do
+    res = Rack::Response.new
+    res.finish.last.should.not.respond_to?(:to_ary)
+    lambda { res.finish.last.to_ary }.should.raise(NoMethodError)
   end
 end
