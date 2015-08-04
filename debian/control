@@ -4,7 +4,8 @@ Priority: optional
 Maintainer: Pexip AS <packaging@pexip.com>
 XSBC-Pexip-Original-Maintainer: Debian Ruby Extras Maintainers <pkg-ruby-extras-maintainers@lists.alioth.debian.org>
 XSBC-Pexip-Original-Uploaders: Lucas Nussbaum <lucas@debian.org>, Youhei SASAKI <uwabami@gfd-dennou.org>, Paul van Tilburg <paulvt@debian.org>, Antonio Terceiro <terceiro@debian.org>
-Build-Depends: debhelper (>= 7.0.50~), gem2deb (>= 0.3.0~), rake, ruby-bacon, ruby-memcache-client, thin
+Build-Depends: debhelper (>= 7.0.50~), gem2deb (>= 0.2.1), rake, ruby-bacon, thin
+#ruby-memcache-client
 Standards-Version: 3.9.6
 Vcs-Git: git://anonscm.debian.org/pkg-ruby-extras/ruby-rack.git
 Vcs-Browser: http://anonscm.debian.org/gitweb?p=pkg-ruby-extras/ruby-rack.git;a=summary
