@@ -125,6 +125,31 @@ describe Rack::Request do
     req.params.should.equal "foo" => "bar", "quux" => "bla"
   end
 
+  should "limit the keys from the GET query string" do
+    env = Rack::MockRequest.env_for("/?foo=bar")
+
+    old, Rack::Utils.key_space_limit = Rack::Utils.key_space_limit, 1
+    begin
+      req = Rack::Request.new(env)
+      lambda { req.GET }.should.raise(RangeError)
+    ensure
+      Rack::Utils.key_space_limit = old
+    end
+  end
+
+  should "limit the key size per nested params hash" do
+    nested_query = Rack::MockRequest.env_for("/?foo[bar][baz][qux]=1")
+    plain_query  = Rack::MockRequest.env_for("/?foo_bar__baz__qux_=1")
+
+    old, Rack::Utils.key_space_limit = Rack::Utils.key_space_limit, 3
+    begin
+      lambda { Rack::Request.new(nested_query).GET }.should.not.raise(RangeError)
+      lambda { Rack::Request.new(plain_query).GET  }.should.raise(RangeError)
+    ensure
+      Rack::Utils.key_space_limit = old
+    end
+  end
+
   should "not unify GET and POST when calling params" do
     mr = Rack::MockRequest.env_for("/?foo=quux",
       "REQUEST_METHOD" => 'POST',
@@ -155,6 +180,20 @@ describe Rack::Request do
     req.GET.should.equal "foo" => "quux"
     req.POST.should.equal "foo" => "bar", "quux" => "bla"
     req.params.should.equal "foo" => "bar", "quux" => "bla"
+  end
+
+  should "limit the keys from the POST form data" do
+    env = Rack::MockRequest.env_for("",
+            "REQUEST_METHOD" => 'POST',
+            :input => "foo=bar&quux=bla")
+
+    old, Rack::Utils.key_space_limit = Rack::Utils.key_space_limit, 1
+    begin
+      req = Rack::Request.new(env)
+      lambda { req.POST }.should.raise(RangeError)
+    ensure
+      Rack::Utils.key_space_limit = old
+    end
   end
 
   should "parse POST data with explicit content type regardless of method" do
@@ -333,13 +372,17 @@ describe Rack::Request do
     request.scheme.should.equal "https"
     request.should.be.ssl?
 
+    request = Rack::Request.new(Rack::MockRequest.env_for("/", 'HTTP_X_FORWARDED_SCHEME' => 'https'))
+    request.scheme.should.equal "https"
+    request.should.be.ssl?
+
     request = Rack::Request.new(Rack::MockRequest.env_for("/", 'HTTP_X_FORWARDED_PROTO' => 'https'))
     request.scheme.should.equal "https"
     request.should.be.ssl?
 
     request = Rack::Request.new(Rack::MockRequest.env_for("/", 'HTTP_X_FORWARDED_PROTO' => 'https, http, http'))
     request.scheme.should.equal "https"
-    request.should.be.ssl
+    request.should.be.ssl?
   end
 
   should "parse cookies" do
@@ -357,11 +400,117 @@ describe Rack::Request do
     hash = req.cookies
     req.env.delete("HTTP_COOKIE")
     req.cookies.should.equal(hash)
+    req.env["HTTP_COOKIE"] = "zoo=m"
+    req.cookies.should.equal(hash)
   end
 
-  should "raise any errors on every request" do
+  should "modify the cookies hash in place" do
+    req = Rack::Request.new(Rack::MockRequest.env_for(""))
+    req.cookies.should.equal({})
+    req.cookies['foo'] = 'bar'
+    req.cookies.should.equal 'foo' => 'bar'
+  end
+
+  should "not modify the params hash in place" do
+    e = Rack::MockRequest.env_for("")
+    req1 = Rack::Request.new(e)
+    req1.params.should.equal({})
+    req1.params['foo'] = 'bar'
+    req1.params.should.equal 'foo' => 'bar'
+    req2 = Rack::Request.new(e)
+    req2.params.should.equal({})
+  end
+
+  should "modify params hash if param is in GET" do
+    e = Rack::MockRequest.env_for("?foo=duh")
+    req1 = Rack::Request.new(e)
+    req1.params.should.equal 'foo' => 'duh'
+    req1.update_param 'foo', 'bar'
+    req1.params.should.equal 'foo' => 'bar'
+    req2 = Rack::Request.new(e)
+    req2.params.should.equal 'foo' => 'bar'
+  end
+
+  should "modify params hash if param is in POST" do
+    e = Rack::MockRequest.env_for("", "REQUEST_METHOD" => 'POST', :input => 'foo=duh')
+    req1 = Rack::Request.new(e)
+    req1.params.should.equal 'foo' => 'duh'
+    req1.update_param 'foo', 'bar'
+    req1.params.should.equal 'foo' => 'bar'
+    req2 = Rack::Request.new(e)
+    req2.params.should.equal 'foo' => 'bar'
+  end
+
+  should "modify params hash, even if param didn't exist before" do
+    e = Rack::MockRequest.env_for("")
+    req1 = Rack::Request.new(e)
+    req1.params.should.equal({})
+    req1.update_param 'foo', 'bar'
+    req1.params.should.equal 'foo' => 'bar'
+    req2 = Rack::Request.new(e)
+    req2.params.should.equal 'foo' => 'bar'
+  end
+
+  should "modify params hash by changing only GET" do
+    e = Rack::MockRequest.env_for("?foo=duhget")
+    req = Rack::Request.new(e)
+    req.GET.should.equal 'foo' => 'duhget'
+    req.POST.should.equal({})
+    req.update_param 'foo', 'bar'
+    req.GET.should.equal 'foo' => 'bar'
+    req.POST.should.equal({})
+  end
+
+  should "modify params hash by changing only POST" do
+    e = Rack::MockRequest.env_for("", "REQUEST_METHOD" => 'POST', :input => "foo=duhpost")
+    req = Rack::Request.new(e)
+    req.GET.should.equal({})
+    req.POST.should.equal 'foo' => 'duhpost'
+    req.update_param 'foo', 'bar'
+    req.GET.should.equal({})
+    req.POST.should.equal 'foo' => 'bar'
+  end
+
+  should "modify params hash, even if param is defined in both POST and GET" do
+    e = Rack::MockRequest.env_for("?foo=duhget", "REQUEST_METHOD" => 'POST', :input => "foo=duhpost")
+    req1 = Rack::Request.new(e)
+    req1.GET.should.equal 'foo' => 'duhget'
+    req1.POST.should.equal 'foo' => 'duhpost'
+    req1.params.should.equal 'foo' => 'duhpost'
+    req1.update_param 'foo', 'bar'
+    req1.GET.should.equal 'foo' => 'bar'
+    req1.POST.should.equal 'foo' => 'bar'
+    req1.params.should.equal 'foo' => 'bar'
+    req2 = Rack::Request.new(e)
+    req2.GET.should.equal 'foo' => 'bar'
+    req2.POST.should.equal 'foo' => 'bar'
+    req2.params.should.equal 'foo' => 'bar'
+    req2.params.should.equal 'foo' => 'bar'
+  end
+
+  should "allow deleting from params hash if param is in GET" do
+    e = Rack::MockRequest.env_for("?foo=bar")
+    req1 = Rack::Request.new(e)
+    req1.params.should.equal 'foo' => 'bar'
+    req1.delete_param('foo').should.equal 'bar'
+    req1.params.should.equal({})
+    req2 = Rack::Request.new(e)
+    req2.params.should.equal({})
+  end
+
+  should "allow deleting from params hash if param is in POST" do
+    e = Rack::MockRequest.env_for("", "REQUEST_METHOD" => 'POST', :input => 'foo=bar')
+    req1 = Rack::Request.new(e)
+    req1.params.should.equal 'foo' => 'bar'
+    req1.delete_param('foo').should.equal 'bar'
+    req1.params.should.equal({})
+    req2 = Rack::Request.new(e)
+    req2.params.should.equal({})
+  end
+
+  should "pass through non-uri escaped cookies as-is" do
     req = Rack::Request.new Rack::MockRequest.env_for("", "HTTP_COOKIE" => "foo=%")
-    2.times { proc { req.cookies }.should.raise(ArgumentError) }
+    req.cookies["foo"].should == "%"
   end
 
   should "parse cookies according to RFC 2109" do
@@ -420,7 +569,10 @@ describe Rack::Request do
       should.equal "http://example.org:8080/"
     Rack::Request.new(Rack::MockRequest.env_for("https://example.org/")).url.
       should.equal "https://example.org/"
-
+    Rack::Request.new(Rack::MockRequest.env_for("coffee://example.org/")).url.
+      should.equal "coffee://example.org/"
+    Rack::Request.new(Rack::MockRequest.env_for("coffee://example.org:443/")).url.
+      should.equal "coffee://example.org:443/"
     Rack::Request.new(Rack::MockRequest.env_for("https://example.com:8080/foo?foo")).url.
       should.equal "https://example.com:8080/foo?foo"
   end
@@ -748,38 +900,138 @@ EOF
     parser.call("compress;q=0.5, gzip;q=1.0").should.equal([["compress", 0.5], ["gzip", 1.0]])
     parser.call("gzip;q=1.0, identity; q=0.5, *;q=0").should.equal([["gzip", 1.0], ["identity", 0.5], ["*", 0] ])
 
-    lambda { parser.call("gzip ; q=1.0") }.should.raise(RuntimeError)
+    parser.call("gzip ; q=0.9").should.equal([["gzip", 0.9]])
+    parser.call("gzip ; deflate").should.equal([["gzip", 1.0]])
   end
 
+  ip_app = lambda { |env|
+    request = Rack::Request.new(env)
+    response = Rack::Response.new
+    response.write request.ip
+    response.finish
+  }
+
   should 'provide ip information' do
-    app = lambda { |env|
-      request = Rack::Request.new(env)
-      response = Rack::Response.new
-      response.write request.ip
-      response.finish
-    }
+    mock = Rack::MockRequest.new(Rack::Lint.new(ip_app))
 
-    mock = Rack::MockRequest.new(Rack::Lint.new(app))
-    res = mock.get '/', 'REMOTE_ADDR' => '123.123.123.123'
-    res.body.should.equal '123.123.123.123'
+    res = mock.get '/', 'REMOTE_ADDR' => '1.2.3.4'
+    res.body.should.equal '1.2.3.4'
 
-    res = mock.get '/',
-      'REMOTE_ADDR' => '123.123.123.123',
-      'HTTP_X_FORWARDED_FOR' => '234.234.234.234'
+    res = mock.get '/', 'REMOTE_ADDR' => 'fe80::202:b3ff:fe1e:8329'
+    res.body.should.equal 'fe80::202:b3ff:fe1e:8329'
 
-    res.body.should.equal '234.234.234.234'
+    res = mock.get '/', 'REMOTE_ADDR' => '1.2.3.4,3.4.5.6'
+    res.body.should.equal '1.2.3.4'
+  end
+
+  should 'deals with proxies' do
+    mock = Rack::MockRequest.new(Rack::Lint.new(ip_app))
 
     res = mock.get '/',
-      'REMOTE_ADDR' => '123.123.123.123',
-      'HTTP_X_FORWARDED_FOR' => '234.234.234.234,212.212.212.212'
-
-    res.body.should.equal '234.234.234.234'
+      'REMOTE_ADDR' => '1.2.3.4',
+      'HTTP_X_FORWARDED_FOR' => '3.4.5.6'
+    res.body.should.equal '1.2.3.4'
 
     res = mock.get '/',
-      'REMOTE_ADDR' => '123.123.123.123',
-      'HTTP_X_FORWARDED_FOR' => 'unknown,234.234.234.234,212.212.212.212'
+      'REMOTE_ADDR' => '1.2.3.4',
+      'HTTP_X_FORWARDED_FOR' => 'unknown'
+    res.body.should.equal '1.2.3.4'
 
-    res.body.should.equal '234.234.234.234'
+    res = mock.get '/',
+      'REMOTE_ADDR' => '127.0.0.1',
+      'HTTP_X_FORWARDED_FOR' => '3.4.5.6'
+    res.body.should.equal '3.4.5.6'
+
+    res = mock.get '/', 'HTTP_X_FORWARDED_FOR' => 'unknown,3.4.5.6'
+    res.body.should.equal '3.4.5.6'
+
+    res = mock.get '/', 'HTTP_X_FORWARDED_FOR' => '192.168.0.1,3.4.5.6'
+    res.body.should.equal '3.4.5.6'
+
+    res = mock.get '/', 'HTTP_X_FORWARDED_FOR' => '10.0.0.1,3.4.5.6'
+    res.body.should.equal '3.4.5.6'
+
+    res = mock.get '/', 'HTTP_X_FORWARDED_FOR' => '10.0.0.1, 10.0.0.1, 3.4.5.6'
+    res.body.should.equal '3.4.5.6'
+
+    res = mock.get '/', 'HTTP_X_FORWARDED_FOR' => '127.0.0.1, 3.4.5.6'
+    res.body.should.equal '3.4.5.6'
+
+    res = mock.get '/', 'HTTP_X_FORWARDED_FOR' => 'unknown,192.168.0.1'
+    res.body.should.equal 'unknown'
+
+    res = mock.get '/', 'HTTP_X_FORWARDED_FOR' => 'other,unknown,192.168.0.1'
+    res.body.should.equal 'unknown'
+
+    res = mock.get '/', 'HTTP_X_FORWARDED_FOR' => 'unknown,localhost,192.168.0.1'
+    res.body.should.equal 'unknown'
+
+    res = mock.get '/', 'HTTP_X_FORWARDED_FOR' => '9.9.9.9, 3.4.5.6, 10.0.0.1, 172.31.4.4'
+    res.body.should.equal '3.4.5.6'
+
+    res = mock.get '/', 'HTTP_X_FORWARDED_FOR' => '::1,2620:0:1c00:0:812c:9583:754b:ca11'
+    res.body.should.equal '2620:0:1c00:0:812c:9583:754b:ca11'
+
+    res = mock.get '/', 'HTTP_X_FORWARDED_FOR' => '2620:0:1c00:0:812c:9583:754b:ca11,::1'
+    res.body.should.equal '2620:0:1c00:0:812c:9583:754b:ca11'
+
+    res = mock.get '/', 'HTTP_X_FORWARDED_FOR' => 'fd5b:982e:9130:247f:0000:0000:0000:0000,2620:0:1c00:0:812c:9583:754b:ca11'
+    res.body.should.equal '2620:0:1c00:0:812c:9583:754b:ca11'
+
+    res = mock.get '/', 'HTTP_X_FORWARDED_FOR' => '2620:0:1c00:0:812c:9583:754b:ca11,fd5b:982e:9130:247f:0000:0000:0000:0000'
+    res.body.should.equal '2620:0:1c00:0:812c:9583:754b:ca11'
+
+    res = mock.get '/',
+      'HTTP_X_FORWARDED_FOR' => '1.1.1.1, 127.0.0.1',
+      'HTTP_CLIENT_IP' => '1.1.1.1'
+    res.body.should.equal '1.1.1.1'
+
+    # Spoofing attempt
+    res = mock.get '/',
+      'HTTP_X_FORWARDED_FOR' => '1.1.1.1',
+      'HTTP_CLIENT_IP' => '2.2.2.2'
+    res.body.should.equal '1.1.1.1'
+
+    res = mock.get '/', 'HTTP_X_FORWARDED_FOR' => '8.8.8.8, 9.9.9.9'
+    res.body.should.equal '9.9.9.9'
+
+    res = mock.get '/', 'HTTP_X_FORWARDED_FOR' => '8.8.8.8, fe80::202:b3ff:fe1e:8329'
+    res.body.should.equal 'fe80::202:b3ff:fe1e:8329'
+
+    # Unix Sockets
+    res = mock.get '/',
+      'REMOTE_ADDR' => 'unix',
+      'HTTP_X_FORWARDED_FOR' => '3.4.5.6'
+    res.body.should.equal '3.4.5.6'
+
+    res = mock.get '/',
+      'REMOTE_ADDR' => 'unix:/tmp/foo',
+      'HTTP_X_FORWARDED_FOR' => '3.4.5.6'
+    res.body.should.equal '3.4.5.6'
+  end
+
+  should "regard local addresses as proxies" do
+    req = Rack::Request.new(Rack::MockRequest.env_for("/"))
+    req.trusted_proxy?('127.0.0.1').should.equal 0
+    req.trusted_proxy?('10.0.0.1').should.equal 0
+    req.trusted_proxy?('172.16.0.1').should.equal 0
+    req.trusted_proxy?('172.20.0.1').should.equal 0
+    req.trusted_proxy?('172.30.0.1').should.equal 0
+    req.trusted_proxy?('172.31.0.1').should.equal 0
+    req.trusted_proxy?('192.168.0.1').should.equal 0
+    req.trusted_proxy?('::1').should.equal 0
+    req.trusted_proxy?('fd00::').should.equal 0
+    req.trusted_proxy?('localhost').should.equal 0
+    req.trusted_proxy?('unix').should.equal 0
+    req.trusted_proxy?('unix:/tmp/sock').should.equal 0
+
+    req.trusted_proxy?("unix.example.org").should.equal nil
+    req.trusted_proxy?("example.org\n127.0.0.1").should.equal nil
+    req.trusted_proxy?("127.0.0.1\nexample.org").should.equal nil
+    req.trusted_proxy?("11.0.0.1").should.equal nil
+    req.trusted_proxy?("172.15.0.1").should.equal nil
+    req.trusted_proxy?("172.32.0.1").should.equal nil
+    req.trusted_proxy?("2001:470:1f0b:18f8::1").should.equal nil
   end
 
   class MyRequest < Rack::Request

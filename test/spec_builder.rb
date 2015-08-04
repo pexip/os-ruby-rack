@@ -1,4 +1,5 @@
 require 'rack/builder'
+require 'rack/lint'
 require 'rack/mock'
 require 'rack/showexceptions'
 require 'rack/urlmap'
@@ -18,38 +19,46 @@ class NothingMiddleware
 end
 
 describe Rack::Builder do
+  def builder(&block)
+    Rack::Lint.new Rack::Builder.new(&block)
+  end
+  
+  def builder_to_app(&block)
+    Rack::Lint.new Rack::Builder.new(&block).to_app
+  end
+  
   it "supports mapping" do
-    app = Rack::Builder.new do
+    app = builder_to_app do
       map '/' do |outer_env|
-        run lambda { |inner_env| [200, {}, ['root']] }
+        run lambda { |inner_env| [200, {"Content-Type" => "text/plain"}, ['root']] }
       end
       map '/sub' do
-        run lambda { |inner_env| [200, {}, ['sub']] }
+        run lambda { |inner_env| [200, {"Content-Type" => "text/plain"}, ['sub']] }
       end
-    end.to_app
+    end
     Rack::MockRequest.new(app).get("/").body.to_s.should.equal 'root'
     Rack::MockRequest.new(app).get("/sub").body.to_s.should.equal 'sub'
   end
 
   it "doesn't dupe env even when mapping" do
-    app = Rack::Builder.new do
+    app = builder_to_app do
       use NothingMiddleware
       map '/' do |outer_env|
         run lambda { |inner_env|
           inner_env['new_key'] = 'new_value'
-          [200, {}, ['root']]
+          [200, {"Content-Type" => "text/plain"}, ['root']]
         }
       end
-    end.to_app
+    end
     Rack::MockRequest.new(app).get("/").body.to_s.should.equal 'root'
     NothingMiddleware.env['new_key'].should.equal 'new_value'
   end
 
   it "chains apps by default" do
-    app = Rack::Builder.new do
+    app = builder_to_app do
       use Rack::ShowExceptions
       run lambda { |env| raise "bzzzt" }
-    end.to_app
+    end
 
     Rack::MockRequest.new(app).get("/").should.be.server_error
     Rack::MockRequest.new(app).get("/").should.be.server_error
@@ -57,7 +66,7 @@ describe Rack::Builder do
   end
 
   it "has implicit #to_app" do
-    app = Rack::Builder.new do
+    app = builder do
       use Rack::ShowExceptions
       run lambda { |env| raise "bzzzt" }
     end
@@ -68,13 +77,13 @@ describe Rack::Builder do
   end
 
   it "supports blocks on use" do
-    app = Rack::Builder.new do
+    app = builder do
       use Rack::ShowExceptions
       use Rack::Auth::Basic do |username, password|
         'secret' == password
       end
 
-      run lambda { |env| [200, {}, ['Hi Boss']] }
+      run lambda { |env| [200, {"Content-Type" => "text/plain"}, ['Hi Boss']] }
     end
 
     response = Rack::MockRequest.new(app).get("/")
@@ -89,7 +98,7 @@ describe Rack::Builder do
   end
 
   it "has explicit #to_app" do
-    app = Rack::Builder.app do
+    app = builder do
       use Rack::ShowExceptions
       run lambda { |env| raise "bzzzt" }
     end
@@ -99,8 +108,30 @@ describe Rack::Builder do
     Rack::MockRequest.new(app).get("/").should.be.server_error
   end
 
+  it "can mix map and run for endpoints" do
+    app = builder do
+      map '/sub' do
+        run lambda { |inner_env| [200, {"Content-Type" => "text/plain"}, ['sub']] }
+      end
+      run lambda { |inner_env| [200, {"Content-Type" => "text/plain"}, ['root']] }
+    end
+
+    Rack::MockRequest.new(app).get("/").body.to_s.should.equal 'root'
+    Rack::MockRequest.new(app).get("/sub").body.to_s.should.equal 'sub'
+  end
+
+  it "accepts middleware-only map blocks" do
+    app = builder do
+      map('/foo') { use Rack::ShowExceptions }
+      run lambda { |env| raise "bzzzt" }
+    end
+
+    proc { Rack::MockRequest.new(app).get("/") }.should.raise(RuntimeError)
+    Rack::MockRequest.new(app).get("/foo").should.be.server_error
+  end
+
   should "initialize apps once" do
-    app = Rack::Builder.new do
+    app = builder do
       class AppClass
         def initialize
           @called = 0
@@ -120,6 +151,23 @@ describe Rack::Builder do
     Rack::MockRequest.new(app).get("/").should.be.server_error
   end
 
+  it "allows use after run" do
+    app = builder do
+      run lambda { |env| raise "bzzzt" }
+      use Rack::ShowExceptions
+    end
+
+    Rack::MockRequest.new(app).get("/").should.be.server_error
+    Rack::MockRequest.new(app).get("/").should.be.server_error
+    Rack::MockRequest.new(app).get("/").should.be.server_error
+  end
+
+  it 'complains about a missing run' do
+    proc do
+      Rack::Lint.new Rack::Builder.app { use Rack::ShowExceptions }
+    end.should.raise(RuntimeError)
+  end
+
   describe "parse_file" do
     def config_file(name)
       File.join(File.dirname(__FILE__), 'builder', name)
@@ -133,6 +181,7 @@ describe Rack::Builder do
 
     it "removes __END__ before evaluating app" do
       app, options = Rack::Builder.parse_file config_file('end.ru')
+      options = nil # ignored, prevents warning
       Rack::MockRequest.new(app).get("/").body.to_s.should.equal 'OK'
     end
 
@@ -144,9 +193,22 @@ describe Rack::Builder do
 
     it "requires anything not ending in .ru" do
       $: << File.dirname(__FILE__)
-      app, options = Rack::Builder.parse_file 'builder/anything'
+      app, * = Rack::Builder.parse_file 'builder/anything'
       Rack::MockRequest.new(app).get("/").body.to_s.should.equal 'OK'
       $:.pop
+    end
+
+    it "sets __LINE__ correctly" do
+      app, options = Rack::Builder.parse_file config_file('line.ru')
+      options = nil # ignored, prevents warning
+      Rack::MockRequest.new(app).get("/").body.to_s.should.equal '1'
+    end
+  end
+
+  describe 'new_from_string' do
+    it "builds a rack app from string" do
+      app, = Rack::Builder.new_from_string "run lambda{|env| [200, {'Content-Type' => 'text/plane'}, ['OK']] }"
+      Rack::MockRequest.new(app).get("/").body.to_s.should.equal 'OK'
     end
   end
 end
