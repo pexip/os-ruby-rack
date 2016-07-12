@@ -1,4 +1,5 @@
 require 'rack/utils'
+require 'rack/body_proxy'
 
 module Rack
 
@@ -15,16 +16,19 @@ module Rack
       headers = HeaderHash.new(headers)
 
       if !STATUS_WITH_NO_ENTITY_BODY.include?(status.to_i) &&
-         !headers['Content-Length'] &&
+         !headers[CONTENT_LENGTH] &&
          !headers['Transfer-Encoding'] &&
          body.respond_to?(:to_ary)
 
         obody = body
         body, length = [], 0
         obody.each { |part| body << part; length += bytesize(part) }
-        obody.close if obody.respond_to?(:close)
 
-        headers['Content-Length'] = length.to_s
+        body = BodyProxy.new(body) do
+          obody.close if obody.respond_to?(:close)
+        end
+
+        headers[CONTENT_LENGTH] = length.to_s
       end
 
       [status, headers, body]

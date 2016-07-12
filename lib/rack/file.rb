@@ -12,8 +12,8 @@ module Rack
   # like sendfile on the +path+.
 
   class File
-    SEPS = Regexp.union(*[::File::SEPARATOR, ::File::ALT_SEPARATOR].compact)
-    ALLOWED_VERBS = %w[GET HEAD]
+    ALLOWED_VERBS = %w[GET HEAD OPTIONS]
+    ALLOW_HEADER = ALLOWED_VERBS.join(', ')
 
     attr_accessor :root
     attr_accessor :path
@@ -34,21 +34,14 @@ module Rack
     F = ::File
 
     def _call(env)
-      unless ALLOWED_VERBS.include? env["REQUEST_METHOD"]
-        return fail(405, "Method Not Allowed")
+      unless ALLOWED_VERBS.include? env[REQUEST_METHOD]
+        return fail(405, "Method Not Allowed", {'Allow' => ALLOW_HEADER})
       end
 
-      path_info = Utils.unescape(env["PATH_INFO"])
-      parts = path_info.split SEPS
+      path_info = Utils.unescape(env[PATH_INFO])
+      clean_path_info = Utils.clean_path_info(path_info)
 
-      clean = []
-
-      parts.each do |part|
-        next if part.empty? || part == '.'
-        part == '..' ? clean.pop : clean << part
-      end
-
-      @path = F.join(@root, *clean)
+      @path = F.join(@root, clean_path_info)
 
       available = begin
         F.file?(@path) && F.readable?(@path)
@@ -64,23 +57,21 @@ module Rack
     end
 
     def serving(env)
+      if env["REQUEST_METHOD"] == "OPTIONS"
+        return [200, {'Allow' => ALLOW_HEADER, CONTENT_LENGTH => '0'}, []]
+      end
       last_modified = F.mtime(@path).httpdate
       return [304, {}, []] if env['HTTP_IF_MODIFIED_SINCE'] == last_modified
 
       headers = { "Last-Modified" => last_modified }
-      mime = Mime.mime_type(F.extname(@path), @default_mime)
-      headers["Content-Type"] = mime if mime
+      headers[CONTENT_TYPE] = mime_type if mime_type
 
       # Set custom headers
       @headers.each { |field, content| headers[field] = content } if @headers
 
-      response = [ 200, headers, env["REQUEST_METHOD"] == "HEAD" ? [] : self ]
+      response = [ 200, headers, env[REQUEST_METHOD] == "HEAD" ? [] : self ]
 
-      # NOTE:
-      #   We check via File::size? whether this file provides size info
-      #   via stat (e.g. /proc files often don't), otherwise we have to
-      #   figure it out by reading the whole file into memory.
-      size = F.size?(@path) || Utils.bytesize(F.read(@path))
+      size = filesize
 
       ranges = Rack::Utils.byte_ranges(env, size)
       if ranges.nil? || ranges.length > 1
@@ -101,7 +92,9 @@ module Rack
         size = @range.end - @range.begin + 1
       end
 
-      response[1]["Content-Length"] = size.to_s
+      response[2] = [response_body] unless response_body.nil?
+
+      response[1][CONTENT_LENGTH] = size.to_s
       response
     end
 
@@ -121,18 +114,39 @@ module Rack
 
     private
 
-    def fail(status, body)
+    def fail(status, body, headers = {})
       body += "\n"
       [
         status,
         {
-          "Content-Type" => "text/plain",
-          "Content-Length" => body.size.to_s,
+          CONTENT_TYPE   => "text/plain",
+          CONTENT_LENGTH => body.size.to_s,
           "X-Cascade" => "pass"
-        },
+        }.merge!(headers),
         [body]
       ]
     end
 
+    # The MIME type for the contents of the file located at @path
+    def mime_type
+      Mime.mime_type(F.extname(@path), @default_mime)
+    end
+
+    def filesize
+      # If response_body is present, use its size.
+      return Rack::Utils.bytesize(response_body) if response_body
+
+      #   We check via File::size? whether this file provides size info
+      #   via stat (e.g. /proc files often don't), otherwise we have to
+      #   figure it out by reading the whole file into memory.
+      F.size?(@path) || Utils.bytesize(F.read(@path))
+    end
+
+    # By default, the response body for file requests is nil.
+    # In this case, the response body will be generated later
+    # from the file at @path
+    def response_body
+      nil
+    end
   end
 end

@@ -21,13 +21,13 @@ describe Rack::ETag do
   should "set ETag if none is set if status is 200" do
     app = lambda { |env| [200, {'Content-Type' => 'text/plain'}, ["Hello, World!"]] }
     response = etag(app).call(request)
-    response[1]['ETag'].should.equal "\"65a8e27d8879283831b664bd8b7f0ad4\""
+    response[1]['ETag'].should.equal "W/\"65a8e27d8879283831b664bd8b7f0ad4\""
   end
 
   should "set ETag if none is set if status is 201" do
     app = lambda { |env| [201, {'Content-Type' => 'text/plain'}, ["Hello, World!"]] }
     response = etag(app).call(request)
-    response[1]['ETag'].should.equal "\"65a8e27d8879283831b664bd8b7f0ad4\""
+    response[1]['ETag'].should.equal "W/\"65a8e27d8879283831b664bd8b7f0ad4\""
   end
 
   should "set Cache-Control to 'max-age=0, private, must-revalidate' (default) if none is set" do
@@ -94,5 +94,14 @@ describe Rack::ETag do
     app = lambda { |env| [200, {'Content-Type' => 'text/plain', 'Cache-Control' => 'no-cache, must-revalidate'}, ['Hello, World!']] }
     response = etag(app).call(request)
     response[1]['ETag'].should.be.nil
+  end
+
+  should "close the original body" do
+    body = StringIO.new
+    app = lambda { |env| [200, {}, body] }
+    response = etag(app).call(request)
+    body.should.not.be.closed
+    response[2].close
+    body.should.be.closed
   end
 end

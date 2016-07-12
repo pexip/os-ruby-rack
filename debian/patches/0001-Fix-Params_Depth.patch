@@ -12,59 +12,12 @@ Conflicts:
  test/spec_utils.rb | 12 ++++++++++++
  2 files changed, 23 insertions(+), 4 deletions(-)
 
---- a/lib/rack/utils.rb
-+++ b/lib/rack/utils.rb
-@@ -52,12 +52,17 @@
- 
-     class << self
-       attr_accessor :key_space_limit
-+      attr_accessor :param_depth_limit
-     end
- 
-     # The default number of bytes to allow parameter keys to take up.
-     # This helps prevent a rogue client from flooding a Request.
-     self.key_space_limit = 65536
- 
-+    # Default depth at which the parameter parser will raise an exception for
-+    # being too deep.  This helps prevent SystemStackErrors
-+    self.param_depth_limit = 100
-+
-     # Stolen from Mongrel, with some small modifications:
-     # Parses a query string by breaking it up at the '&'
-     # and ';' characters.  You can also use this to parse
-@@ -100,7 +105,9 @@
-     end
-     module_function :parse_nested_query
- 
--    def normalize_params(params, name, v = nil)
-+    def normalize_params(params, name, v = nil, depth = Utils.param_depth_limit)
-+      raise RangeError if depth <= 0
-+
-       name =~ %r(\A[\[\]]*([^\[\]]+)\]*)
-       k = $1 || ''
-       after = $' || ''
-@@ -118,14 +125,14 @@
-         params[k] ||= []
-         raise TypeError, "expected Array (got #{params[k].class.name}) for param `#{k}'" unless params[k].is_a?(Array)
-         if params_hash_type?(params[k].last) && !params[k].last.key?(child_key)
--          normalize_params(params[k].last, child_key, v)
-+          normalize_params(params[k].last, child_key, v, depth - 1)
-         else
--          params[k] << normalize_params(params.class.new, child_key, v)
-+          params[k] << normalize_params(params.class.new, child_key, v, depth - 1)
-         end
-       else
-         params[k] ||= params.class.new
-         raise TypeError, "expected Hash (got #{params[k].class.name}) for param `#{k}'" unless params_hash_type?(params[k])
--        params[k] = normalize_params(params[k], after, v)
-+        params[k] = normalize_params(params[k], after, v, depth - 1)
-       end
- 
-       return params
---- a/test/spec_utils.rb
-+++ b/test/spec_utils.rb
-@@ -123,6 +123,18 @@
-     Rack::Utils.parse_query(",foo=bar;,", ";,").should.equal "foo" => "bar"
+Index: ruby-rack/test/spec_utils.rb
+===================================================================
+--- ruby-rack.orig/test/spec_utils.rb
++++ ruby-rack/test/spec_utils.rb
+@@ -146,6 +146,18 @@ describe Rack::Utils do
+     }.should.not.raise
    end
  
 +  should "raise an exception if the params are too deep" do

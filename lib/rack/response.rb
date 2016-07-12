@@ -1,5 +1,6 @@
 require 'rack/request'
 require 'rack/utils'
+require 'rack/body_proxy'
 require 'time'
 
 module Rack
@@ -19,11 +20,13 @@ module Rack
   class Response
     attr_accessor :length
 
+    CHUNKED = 'chunked'.freeze
+    TRANSFER_ENCODING = 'Transfer-Encoding'.freeze
     def initialize(body=[], status=200, header={})
       @status = status.to_i
       @header = Utils::HeaderHash.new.merge(header)
 
-      @chunked = "chunked" == @header['Transfer-Encoding']
+      @chunked = CHUNKED == @header[TRANSFER_ENCODING]
       @writer  = lambda { |x| @body << x }
       @block   = nil
       @length  = 0
@@ -71,8 +74,8 @@ module Rack
       @block = block
 
       if [204, 205, 304].include?(status.to_i)
-        header.delete "Content-Type"
-        header.delete "Content-Length"
+        header.delete CONTENT_TYPE
+        header.delete CONTENT_LENGTH
         close
         [status.to_i, header, []]
       else
@@ -97,7 +100,7 @@ module Rack
       @length += Rack::Utils.bytesize(s) unless @chunked
       @writer.call s
 
-      header["Content-Length"] = @length.to_s unless @chunked
+      header[CONTENT_LENGTH] = @length.to_s unless @chunked
       str
     end
 
@@ -121,10 +124,14 @@ module Rack
       def server_error?;       status >= 500 && status < 600;        end
 
       def ok?;                 status == 200;                        end
+      def created?;            status == 201;                        end
+      def accepted?;           status == 202;                        end
       def bad_request?;        status == 400;                        end
+      def unauthorized?;       status == 401;                        end
       def forbidden?;          status == 403;                        end
       def not_found?;          status == 404;                        end
       def method_not_allowed?; status == 405;                        end
+      def i_m_a_teapot?;       status == 418;                        end
       def unprocessable?;      status == 422;                        end
 
       def redirect?;           [301, 302, 303, 307].include? status; end
@@ -137,11 +144,11 @@ module Rack
       end
 
       def content_type
-        headers["Content-Type"]
+        headers[CONTENT_TYPE]
       end
 
       def content_length
-        cl = headers["Content-Length"]
+        cl = headers[CONTENT_LENGTH]
         cl ? cl.to_i : cl
       end
 

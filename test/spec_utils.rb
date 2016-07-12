@@ -123,6 +123,29 @@ describe Rack::Utils do
     Rack::Utils.parse_query(",foo=bar;,", ";,").should.equal "foo" => "bar"
   end
 
+  should "not create infinite loops with cycle structures" do
+    ex = { "foo" => nil }
+    ex["foo"] = ex
+
+    params = Rack::Utils::KeySpaceConstrainedParams.new
+    params['foo'] = params
+    lambda {
+      params.to_params_hash.to_s.should.equal ex.to_s
+    }.should.not.raise
+  end
+
+  should "raise an exception if the params are too deep" do
+    len = Rack::Utils.param_depth_limit
+
+    lambda {
+      Rack::Utils.parse_nested_query("foo#{"[a]" * len}=bar")
+    }.should.raise(RangeError)
+
+    lambda {
+      Rack::Utils.parse_nested_query("foo#{"[a]" * (len - 1)}=bar")
+    }.should.not.raise
+  end
+
   should "parse nested query strings correctly" do
     Rack::Utils.parse_nested_query("foo").
       should.equal "foo" => nil
@@ -157,6 +180,16 @@ describe Rack::Utils do
       should.equal "foo" => [""]
     Rack::Utils.parse_nested_query("foo[]=bar").
       should.equal "foo" => ["bar"]
+    Rack::Utils.parse_nested_query("foo[]=bar&foo").
+      should.equal "foo" => nil
+    Rack::Utils.parse_nested_query("foo[]=bar&foo[").
+      should.equal "foo" => ["bar"], "foo[" => nil
+    Rack::Utils.parse_nested_query("foo[]=bar&foo[=baz").
+      should.equal "foo" => ["bar"], "foo[" => "baz"
+    Rack::Utils.parse_nested_query("foo[]=bar&foo[]").
+      should.equal "foo" => ["bar", nil]
+    Rack::Utils.parse_nested_query("foo[]=bar&foo[]=").
+      should.equal "foo" => ["bar", ""]
 
     Rack::Utils.parse_nested_query("foo[]=1&foo[]=2").
       should.equal "foo" => ["1", "2"]
@@ -192,16 +225,22 @@ describe Rack::Utils do
       should.equal "x" => {"y" => [{"z" => "1", "w" => "a"}, {"z" => "2", "w" => "3"}]}
 
     lambda { Rack::Utils.parse_nested_query("x[y]=1&x[y]z=2") }.
-      should.raise(TypeError).
+      should.raise(Rack::Utils::ParameterTypeError).
       message.should.equal "expected Hash (got String) for param `y'"
 
     lambda { Rack::Utils.parse_nested_query("x[y]=1&x[]=1") }.
-      should.raise(TypeError).
+      should.raise(Rack::Utils::ParameterTypeError).
       message.should.match(/expected Array \(got [^)]*\) for param `x'/)
 
     lambda { Rack::Utils.parse_nested_query("x[y]=1&x[y][][w]=2") }.
-      should.raise(TypeError).
+      should.raise(Rack::Utils::ParameterTypeError).
       message.should.equal "expected Array (got String) for param `y'"
+
+    if RUBY_VERSION.to_f > 1.9
+      lambda { Rack::Utils.parse_nested_query("foo%81E=1") }.
+        should.raise(Rack::Utils::InvalidParameterError).
+        message.should.equal "invalid byte sequence in UTF-8"
+    end
   end
 
   should "build query strings correctly" do
@@ -221,6 +260,8 @@ describe Rack::Utils do
 
     Rack::Utils.build_nested_query("foo" => "1", "bar" => "2").
       should.be equal_query_to("foo=1&bar=2")
+    Rack::Utils.build_nested_query("foo" => 1, "bar" => 2).
+      should.be equal_query_to("foo=1&bar=2")
     Rack::Utils.build_nested_query("my weird field" => "q1!2\"'w$5&7/z8)?").
       should.be equal_query_to("my+weird+field=q1%212%22%27w%245%267%2Fz8%29%3F")
 
@@ -230,6 +271,14 @@ describe Rack::Utils do
       should.equal "foo[]="
     Rack::Utils.build_nested_query("foo" => ["bar"]).
       should.equal "foo[]=bar"
+    Rack::Utils.build_nested_query('foo' => []).
+      should.equal ''
+    Rack::Utils.build_nested_query('foo' => {}).
+      should.equal ''
+    Rack::Utils.build_nested_query('foo' => 'bar', 'baz' => []).
+      should.equal 'foo=bar'
+    Rack::Utils.build_nested_query('foo' => 'bar', 'baz' => {}).
+      should.equal 'foo=bar'
 
     # The ordering of the output query string is unpredictable with 1.8's
     # unordered hash. Test that build_nested_query performs the inverse
@@ -290,9 +339,15 @@ describe Rack::Utils do
     # Higher quality matches are preferred
     Rack::Utils.best_q_match("text/*;q=0.5,text/plain;q=1.0", %w[text/plain text/html]).should.equal "text/plain"
 
+    # Respect requested content type
+    Rack::Utils.best_q_match("application/json", %w[application/vnd.lotus-1-2-3 application/json]).should.equal "application/json"
+
     # All else equal, the available mimes are preferred in order
     Rack::Utils.best_q_match("text/*", %w[text/html text/plain]).should.equal "text/html"
     Rack::Utils.best_q_match("text/plain,text/html", %w[text/html text/plain]).should.equal "text/html"
+
+    # When there are no matches, return nil:
+    Rack::Utils.best_q_match("application/json", %w[text/html text/plain]).should.equal nil
   end
 
   should "escape html entities [&><'\"/]" do
@@ -377,6 +432,25 @@ describe Rack::Utils do
 
   should "return rfc2109 format from rfc2109 helper" do
     Rack::Utils.rfc2109(Time.at(0).gmtime).should == "Thu, 01-Jan-1970 00:00:00 GMT"
+  end
+
+  should "clean directory traversal" do
+    Rack::Utils.clean_path_info("/cgi/../cgi/test").should.equal "/cgi/test"
+    Rack::Utils.clean_path_info(".").should.empty
+    Rack::Utils.clean_path_info("test/..").should.empty
+  end
+
+  should "clean unsafe directory traversal to safe path" do
+    Rack::Utils.clean_path_info("/../README.rdoc").should.equal "/README.rdoc"
+    Rack::Utils.clean_path_info("../test/spec_utils.rb").should.equal "test/spec_utils.rb"
+  end
+
+  should "not clean directory traversal with encoded periods" do
+    Rack::Utils.clean_path_info("/%2E%2E/README").should.equal "/%2E%2E/README"
+  end
+
+  should "clean slash only paths" do
+    Rack::Utils.clean_path_info("/").should.equal "/"
   end
 end
 

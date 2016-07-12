@@ -53,8 +53,8 @@ module Rack
   #  4) Regular Expressions / Regexp
   #     Provide a regular expression
   #     %r{\.(?:css|js)\z} => Matches files ending in .css or .js
-  #     /\.(?:eot|ttf|otf|woff|svg)\z/ => Matches files ending in
-  #       the most common web font formats (.eot, .ttf, .otf, .woff, .svg)
+  #     /\.(?:eot|ttf|otf|woff2|woff|svg)\z/ => Matches files ending in
+  #       the most common web font formats (.eot, .ttf, .otf, .woff2, .woff, .svg)
   #       Note: This Regexp is available as a shortcut, using the :fonts rule
   #
   #  5) Font Shortcut
@@ -90,9 +90,8 @@ module Rack
       @header_rules = options[:header_rules] || []
       # Allow for legacy :cache_control option while prioritizing global header_rules setting
       @header_rules.insert(0, [:all, {'Cache-Control' => options[:cache_control]}]) if options[:cache_control]
-      @headers = {}
 
-      @file_server = Rack::File.new(root, @headers)
+      @file_server = Rack::File.new(root)
     end
 
     def overwrite_file_path(path)
@@ -108,45 +107,43 @@ module Rack
     end
 
     def call(env)
-      path = env["PATH_INFO"]
+      path = env[PATH_INFO]
 
       if can_serve(path)
         env["PATH_INFO"] = (path =~ /\/$/ ? path + @index : @urls[path]) if overwrite_file_path(path)
-        @path = env["PATH_INFO"]
-        apply_header_rules
-        @file_server.call(env)
+        path = env["PATH_INFO"]
+        response = @file_server.call(env)
+
+        headers = response[1]
+        applicable_rules(path).each do |rule, new_headers|
+          new_headers.each { |field, content| headers[field] = content }
+        end
+
+        response
       else
         @app.call(env)
       end
     end
 
     # Convert HTTP header rules to HTTP headers
-    def apply_header_rules
-      @header_rules.each do |rule, headers|
-        apply_rule(rule, headers)
+    def applicable_rules(path)
+      @header_rules.find_all do |rule, new_headers|
+        case rule
+        when :all
+          true
+        when :fonts
+          path =~ /\.(?:ttf|otf|eot|woff2|woff|svg)\z/
+        when String
+          path = ::Rack::Utils.unescape(path)
+          path.start_with?(rule) || path.start_with?('/' + rule)
+        when Array
+          path =~ /\.(#{rule.join('|')})\z/
+        when Regexp
+          path =~ rule
+        else
+          false
+        end
       end
-    end
-
-    def apply_rule(rule, headers)
-      case rule
-      when :all    # All files
-        set_headers(headers)
-      when :fonts  # Fonts Shortcut
-        set_headers(headers) if @path.match(/\.(?:ttf|otf|eot|woff|svg)\z/)
-      when String  # Folder
-        path = ::Rack::Utils.unescape(@path)
-        set_headers(headers) if (path.start_with?(rule) || path.start_with?('/' + rule))
-      when Array   # Extension/Extensions
-        extensions = rule.join('|')
-        set_headers(headers) if @path.match(/\.(#{extensions})\z/)
-      when Regexp  # Flexible Regexp
-        set_headers(headers) if @path.match(rule)
-      else
-      end
-    end
-
-    def set_headers(headers)
-      headers.each { |field, content| @headers[field] = content }
     end
 
   end

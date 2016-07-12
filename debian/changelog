@@ -1,15 +1,54 @@
-ruby-rack (1.5.2-3+deb8u1) jessie-security; urgency=high
+ruby-rack (1.6.4-4) unstable; urgency=medium
 
-  * Create cherry-picked patch for Security Fix (Closes: #789311).
-    - CVE-2015-3225: 0001-Fix-Params_Depth.patch
-      Default depth at which the parameter parser will raise an exception
-      for being too deep, allows remote attackers to cause a denial of
-      service (SystemStackError) via a request with a large parameter
-      depth.
-  * Add 0002-Add-missing-require-to-response.rb.patch.
-    Add missing require of rack/body_proxy in response.rb
+  * Team upload.
 
- -- Youhei SASAKI <uwabami@gfd-dennou.org>  Wed, 29 Jul 2015 17:12:00 +0900
+  [ Cédric Boutillier ]
+  * Use https:// in Vcs-* fields
+  * Run wrap-and-sort on packaging files
+
+  [ Christian Hofstaedtler ]
+  * Remove uninstallable ruby-memcache-client from test dependencies
+  * Bump Standards-Version to 3.9.8
+
+ -- Christian Hofstaedtler <zeha@debian.org>  Wed, 13 Jul 2016 01:59:31 +0200
+
+ruby-rack (1.6.4-3) unstable; urgency=medium
+
+  * Team upload
+  * Bump compat. version to 9
+  * Update Debian packaging using dh-make-ruby
+  * d/control:
+      Update Vcs-* fields (switch to cgit and https everywhere)
+      Bump Standards-Version to 3.9.7 (no changes)
+      Move to ruby-dalli (memcache-client is deprecated)
+        ROM for ruby-memcache-client
+        https://github.com/rack/rack/issues/1025
+      Remove librack-ruby* relations (those packages are long gone)
+
+ -- Sebastien Badia <seb@sebian.fr>  Thu, 03 Mar 2016 16:24:53 -0300
+
+ruby-rack (1.6.4-2) unstable; urgency=medium
+
+  * Upload to unstable
+
+ -- Antonio Terceiro <terceiro@debian.org>  Sat, 12 Dec 2015 16:08:31 -0200
+
+ruby-rack (1.6.4-1) experimental; urgency=medium
+
+  * Team upload
+  * New upstream release
+  * Refresh patch (part merged upstream)
+
+ -- Pirate Praveen <praveen@debian.org>  Fri, 07 Aug 2015 01:16:26 +0530
+
+ruby-rack (1.5.2-4) unstable; urgency=medium
+
+  * Add patch: Fix upstream Issue 631
+    - uninitialized constant Rack::Response::BodyProxy
+  * Create cherry-picked patch for Security Fix (Closes: #789311)
+    - CVE-2015-3225: 1-4-deep_params.patch
+
+ -- Youhei SASAKI <uwabami@gfd-dennou.org>  Wed, 29 Jul 2015 17:32:29 +0900
 
 ruby-rack (1.5.2-3) unstable; urgency=medium
 
@@ -123,7 +162,7 @@ librack-ruby (1.1.0-4) unstable; urgency=low
 
   * Team upload.
   * This package is now maintained within the Debian/Ruby Extras team.
-  * debian/control: 
+  * debian/control:
     - Added the team (and myself) to the uploaders.
     - Updated the Vcs-* fields.
   * Version the dependency between librack-ruby and librack-ruby1.8.
@@ -145,7 +184,7 @@ librack-ruby (1.1.0-2) unstable; urgency=low
   * Move to ruby1.9.1 (Closes: #569884).
   * Removed unused lintian override.
   * Bumped up Standards-Version.
-  
+
  -- Sebastien Delafond <seb@debian.org>  Mon, 15 Feb 2010 19:42:49 +0100
 
 librack-ruby (1.1.0-1) unstable; urgency=low

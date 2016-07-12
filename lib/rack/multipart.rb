@@ -9,7 +9,7 @@ module Rack
 
     EOL = "\r\n"
     MULTIPART_BOUNDARY = "AaB03x"
-    MULTIPART = %r|\Amultipart/.*boundary=\"?([^\";,]+)\"?|n
+    MULTIPART = %r|\Amultipart/.*boundary=\"?([^\";,]+)\"?|ni
     TOKEN = /[^\s()<>,;:\\"\/\[\]?=]+/
     CONDISP = /Content-Disposition:\s*#{TOKEN}\s*/i
     DISPPARM = /;\s*(#{TOKEN})=("(?:\\"|[^"])*"|#{TOKEN})/
@@ -22,7 +22,7 @@ module Rack
 
     class << self
       def parse_multipart(env)
-        Parser.new(env).parse
+        Parser.create(env).parse
       end
 
       def build_multipart(params, first = true)

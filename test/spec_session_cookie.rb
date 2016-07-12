@@ -119,13 +119,35 @@ describe Rack::Session::Cookie do
         coder.decode('lulz').should.equal nil
       end
     end
+
+    describe 'ZipJSON' do
+      it 'jsons, deflates, and base64 encodes' do
+        coder = Rack::Session::Cookie::Base64::ZipJSON.new
+        obj   = %w[fuuuuu]
+        json = Rack::Utils::OkJson.encode(obj)
+        coder.encode(obj).should.equal [Zlib::Deflate.deflate(json)].pack('m')
+      end
+
+      it 'base64 decodes, inflates, and decodes json' do
+        coder = Rack::Session::Cookie::Base64::ZipJSON.new
+        obj   = %w[fuuuuu]
+        json  = Rack::Utils::OkJson.encode(obj)
+        b64   = [Zlib::Deflate.deflate(json)].pack('m')
+        coder.decode(b64).should.equal obj
+      end
+
+      it 'rescues failures on decode' do
+        coder = Rack::Session::Cookie::Base64::ZipJSON.new
+        coder.decode('lulz').should.equal nil
+      end
+    end
   end
 
   it "warns if no secret is given" do
-    cookie = Rack::Session::Cookie.new(incrementor)
+    Rack::Session::Cookie.new(incrementor)
     @warnings.first.should =~ /no secret/i
     @warnings.clear
-    cookie = Rack::Session::Cookie.new(incrementor, :secret => 'abc')
+    Rack::Session::Cookie.new(incrementor, :secret => 'abc')
     @warnings.should.be.empty?
   end
 
@@ -363,5 +385,26 @@ describe Rack::Session::Cookie do
     response = response_for(:app => incrementor, :request => request)
     response.body.should.match(/counter/)
     response.body.should.match(/foo/)
+  end
+
+  it "allows more than one '--' in the cookie when calculating digests" do
+    @counter = 0
+    app = lambda do |env|
+      env["rack.session"]["message"] ||= ""
+      env["rack.session"]["message"] << "#{(@counter += 1).to_s}--"
+      hash = env["rack.session"].dup
+      hash.delete("session_id")
+      Rack::Response.new(hash["message"]).to_a
+    end
+    # another example of an unsafe coder is Base64.urlsafe_encode64
+    unsafe_coder = Class.new {
+      def encode(hash); hash.inspect end
+      def decode(str); eval(str) if str; end
+    }.new
+    _app = [ app, { :secret => "test", :coder => unsafe_coder } ]
+    response = response_for(:app => _app)
+    response.body.should.equal "1--"
+    response = response_for(:app => _app, :cookie => response)
+    response.body.should.equal "1--2--"
   end
 end

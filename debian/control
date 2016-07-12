@@ -2,28 +2,34 @@ Source: ruby-rack
 Section: ruby
 Priority: optional
 Maintainer: Debian Ruby Extras Maintainers <pkg-ruby-extras-maintainers@lists.alioth.debian.org>
-Uploaders: Lucas Nussbaum <lucas@debian.org>, Youhei SASAKI <uwabami@gfd-dennou.org>, Paul van Tilburg <paulvt@debian.org>, Antonio Terceiro <terceiro@debian.org>
-Build-Depends: debhelper (>= 7.0.50~), gem2deb (>= 0.3.0~), rake, ruby-bacon, ruby-memcache-client, thin
-Standards-Version: 3.9.6
-Vcs-Git: git://anonscm.debian.org/pkg-ruby-extras/ruby-rack.git
-Vcs-Browser: http://anonscm.debian.org/gitweb?p=pkg-ruby-extras/ruby-rack.git;a=summary
-Homepage: http://rack.rubyforge.org
+Uploaders: Lucas Nussbaum <lucas@debian.org>,
+           Youhei SASAKI <uwabami@gfd-dennou.org>,
+           Paul van Tilburg <paulvt@debian.org>,
+           Antonio Terceiro <terceiro@debian.org>
+Build-Depends: debhelper (>= 9~),
+               gem2deb,
+               rake,
+               ruby-bacon,
+               ruby-dalli,
+               thin
+Standards-Version: 3.9.8
+Vcs-Git: https://anonscm.debian.org/git/pkg-ruby-extras/ruby-rack.git
+Vcs-Browser: https://anonscm.debian.org/cgit/pkg-ruby-extras/ruby-rack.git
+Homepage: https://rack.github.io/
+Testsuite: autopkgtest-pkg-ruby
 XS-Ruby-Versions: all
-Testsuite: autopkgtest
 
 Package: ruby-rack
 Architecture: all
 XB-Ruby-Versions: ${ruby:Versions}
-Depends: ${shlibs:Depends}, ${misc:Depends}, ruby | ruby-interpreter
-Replaces: librack-ruby1.9.1 (<< 1.2.2-1~), librack-ruby1.8 (<< 1.2.2-1~), librack-ruby (<< 1.2.2-1~)
-Conflicts: librack-ruby1.9.1 (<< 1.2.2-1~), librack-ruby1.8 (<< 1.2.2-1~), librack-ruby (<< 1.2.2-1~)
-Provides: librack-ruby1.9.1, librack-ruby1.8, librack-ruby
-Description: Modular Ruby webserver interface
- Rack provides a minimal, modular and adaptable interface for
- developing web applications in Ruby.  By wrapping HTTP requests and
- responses in the simplest way possible, it unifies and distills the
- API for web servers, web frameworks, and software in between (the
- so-called middleware) into a single method call.
+Depends: ruby | ruby-interpreter,
+         ${misc:Depends},
+         ${shlibs:Depends}
+Description: modular Ruby webserver interface
+ Rack provides a minimal, modular and adaptable interface for developing
+ web applications in Ruby.  By wrapping HTTP requests and responses in
+ the simplest way possible, it unifies and distills the API for web
+ servers, web frameworks, and software in between (the so-called
+ middleware) into a single method call.
  .
- The exact details of this are described in the Rack specification,
- which all Rack applications should conform to.
+ Also see http://rack.github.io/.

@@ -57,7 +57,7 @@ module Rack
       ## and the *body*.
       check_content_type status, headers
       check_content_length status, headers
-      @head_request = env["REQUEST_METHOD"] == "HEAD"
+      @head_request = env[REQUEST_METHOD] == "HEAD"
       [status, headers, self]
     end
 
@@ -102,7 +102,17 @@ module Rack
       ##                         follows the <tt>?</tt>, if any. May be
       ##                         empty, but is always required!
 
-      ## <tt>SERVER_NAME</tt>, <tt>SERVER_PORT</tt>:: When combined with <tt>SCRIPT_NAME</tt> and <tt>PATH_INFO</tt>, these variables can be used to complete the URL. Note, however, that <tt>HTTP_HOST</tt>, if present, should be used in preference to <tt>SERVER_NAME</tt> for reconstructing the request URL.  <tt>SERVER_NAME</tt> and <tt>SERVER_PORT</tt> can never be empty strings, and so are always required.
+      ## <tt>SERVER_NAME</tt>, <tt>SERVER_PORT</tt>::
+      ##                        When combined with <tt>SCRIPT_NAME</tt> and
+      ##                        <tt>PATH_INFO</tt>, these variables can be
+      ##                        used to complete the URL. Note, however,
+      ##                        that <tt>HTTP_HOST</tt>, if present,
+      ##                        should be used in preference to
+      ##                        <tt>SERVER_NAME</tt> for reconstructing
+      ##                        the request URL.
+      ##                        <tt>SERVER_NAME</tt> and <tt>SERVER_PORT</tt>
+      ##                        can never be empty strings, and so
+      ##                        are always required.
 
       ## <tt>HTTP_</tt> Variables:: Variables corresponding to the
       ##                            client-supplied HTTP request
@@ -112,29 +122,60 @@ module Rack
       ##                            variables should correspond with
       ##                            the presence or absence of the
       ##                            appropriate HTTP header in the
-      ##                            request. See <a href="https://tools.ietf.org/html/rfc3875#section-4.1.18">
-      ##                            RFC3875 section 4.1.18</a> for specific behavior.
+      ##                            request. See
+      ##                            <a href="https://tools.ietf.org/html/rfc3875#section-4.1.18">
+      ##                            RFC3875 section 4.1.18</a> for
+      ##                            specific behavior.
 
       ## In addition to this, the Rack environment must include these
       ## Rack-specific variables:
 
-      ## <tt>rack.version</tt>:: The Array representing this version of Rack. See Rack::VERSION, that corresponds to the version of this SPEC.
-      ## <tt>rack.url_scheme</tt>:: +http+ or +https+, depending on the request URL.
+      ## <tt>rack.version</tt>:: The Array representing this version of Rack
+      ##                         See Rack::VERSION, that corresponds to
+      ##                         the version of this SPEC.
+
+      ## <tt>rack.url_scheme</tt>:: +http+ or +https+, depending on the
+      ##                            request URL.
+
       ## <tt>rack.input</tt>:: See below, the input stream.
+
       ## <tt>rack.errors</tt>:: See below, the error stream.
-      ## <tt>rack.multithread</tt>:: true if the application object may be simultaneously invoked by another thread in the same process, false otherwise.
-      ## <tt>rack.multiprocess</tt>:: true if an equivalent application object may be simultaneously invoked by another process, false otherwise.
-      ## <tt>rack.run_once</tt>:: true if the server expects (but does not guarantee!) that the application will only be invoked this one time during the life of its containing process. Normally, this will only be true for a server based on CGI (or something similar).
-      ## <tt>rack.hijack?</tt>:: present and true if the server supports connection hijacking. See below, hijacking.
-      ## <tt>rack.hijack</tt>:: an object responding to #call that must be called at least once before using rack.hijack_io. It is recommended #call return rack.hijack_io as well as setting it in env if necessary.
-      ## <tt>rack.hijack_io</tt>:: if rack.hijack? is true, and rack.hijack has received #call, this will contain an object resembling an IO. See hijacking.
-      ##
+
+      ## <tt>rack.multithread</tt>:: true if the application object may be
+      ##                             simultaneously invoked by another thread
+      ##                             in the same process, false otherwise.
+
+      ## <tt>rack.multiprocess</tt>:: true if an equivalent application object
+      ##                              may be simultaneously invoked by another
+      ##                              process, false otherwise.
+
+      ## <tt>rack.run_once</tt>:: true if the server expects
+      ##                          (but does not guarantee!) that the
+      ##                          application will only be invoked this one
+      ##                          time during the life of its containing
+      ##                          process. Normally, this will only be true
+      ##                          for a server based on CGI
+      ##                          (or something similar).
+
+      ## <tt>rack.hijack?</tt>:: present and true if the server supports
+      ##                         connection hijacking. See below, hijacking.
+
+      ## <tt>rack.hijack</tt>:: an object responding to #call that must be
+      ##                        called at least once before using
+      ##                        rack.hijack_io.
+      ##                        It is recommended #call return rack.hijack_io
+      ##                        as well as setting it in env if necessary.
+
+      ## <tt>rack.hijack_io</tt>:: if rack.hijack? is true, and rack.hijack
+      ##                           has received #call, this will contain
+      ##                           an object resembling an IO. See hijacking.
 
       ## Additional environment specifications have approved to
       ## standardized middleware APIs.  None of these are required to
       ## be implemented by the server.
 
-      ## <tt>rack.session</tt>:: A hash like interface for storing request session data.
+      ## <tt>rack.session</tt>:: A hash like interface for storing
+      ##                         request session data.
       ##                         The store must implement:
       if session = env['rack.session']
         ##                         store(key, value)         (aliased as []=);
@@ -187,6 +228,23 @@ module Rack
         }
       end
 
+      ## <tt>rack.multipart.buffer_size</tt>:: An Integer hint to the multipart parser as to what chunk size to use for reads and writes.
+      if bufsize = env['rack.multipart.buffer_size']
+        assert("rack.multipart.buffer_size must be an Integer > 0 if specified") {
+          bufsize.is_a?(Integer) && bufsize > 0
+        }
+      end
+
+      ## <tt>rack.multipart.tempfile_factory</tt>:: An object responding to #call with two arguments, the filename and content_type given for the multipart form field, and returning an IO-like object that responds to #<< and optionally #rewind. This factory will be used to instantiate the tempfile for each multipart form file upload field, rather than the default class of Tempfile.
+      if tempfile_factory = env['rack.multipart.tempfile_factory']
+        assert("rack.multipart.tempfile_factory must respond to #call") { tempfile_factory.respond_to?(:call) }
+        env['rack.multipart.tempfile_factory'] = lambda do |filename, content_type|
+          io = tempfile_factory.call(filename, content_type)
+          assert("rack.multipart.tempfile_factory return value must respond to #<<") { io.respond_to?(:<<) }
+          io
+        end
+      end
+
       ## The server or the application can store their own data in the
       ## environment, too.  The keys must contain at least one dot,
       ## and should be prefixed uniquely.  The prefix <tt>rack.</tt>
@@ -218,7 +276,6 @@ module Rack
         }
       }
 
-      ##
       ## There are the following restrictions:
 
       ## * <tt>rack.version</tt> must be an array of Integers.
@@ -238,7 +295,7 @@ module Rack
       check_hijack env
 
       ## * The <tt>REQUEST_METHOD</tt> must be a valid token.
-      assert("REQUEST_METHOD unknown: #{env["REQUEST_METHOD"]}") {
+      assert("REQUEST_METHOD unknown: #{env[REQUEST_METHOD]}") {
         env["REQUEST_METHOD"] =~ /\A[0-9A-Za-z!\#$%&'*+.^_`|~-]+\z/
       }
 
@@ -311,15 +368,23 @@ module Rack
         v
       end
 
-      ## * +read+ behaves like IO#read. Its signature is <tt>read([length, [buffer]])</tt>.
-      ##   If given, +length+ must be a non-negative Integer (>= 0) or +nil+, and +buffer+ must
-      ##   be a String and may not be nil. If +length+ is given and not nil, then this method
-      ##   reads at most +length+ bytes from the input stream. If +length+ is not given or nil,
-      ##   then this method reads all data until EOF.
-      ##   When EOF is reached, this method returns nil if +length+ is given and not nil, or ""
-      ##   if +length+ is not given or is nil.
-      ##   If +buffer+ is given, then the read data will be placed into +buffer+ instead of a
-      ##   newly created String object.
+      ## * +read+ behaves like IO#read.
+      ##   Its signature is <tt>read([length, [buffer]])</tt>.
+      ##
+      ##   If given, +length+ must be a non-negative Integer (>= 0) or +nil+,
+      ##   and +buffer+ must be a String and may not be nil.
+      ##
+      ##   If +length+ is given and not nil, then this method reads at most
+      ##   +length+ bytes from the input stream.
+      ##
+      ##   If +length+ is not given or nil, then this method reads
+      ##   all data until EOF.
+      ##
+      ##   When EOF is reached, this method returns nil if +length+ is given
+      ##   and not nil, or "" if +length+ is not given or is nil.
+      ##
+      ##   If +buffer+ is given, then the read data will be placed
+      ##   into +buffer+ instead of a newly created String object.
       def read(*args)
         assert("rack.input#read called with too many arguments") {
           args.size <= 2
@@ -462,20 +527,20 @@ module Rack
           ## already present, in rack.hijack_io.
           io = original_hijack.call
           HijackWrapper.new(io)
-          ## 
+          ##
           ## rack.hijack_io must respond to:
           ## <tt>read, write, read_nonblock, write_nonblock, flush, close,
           ## close_read, close_write, closed?</tt>
-          ## 
+          ##
           ## The semantics of these IO methods must be a best effort match to
           ## those of a normal ruby IO or Socket object, using standard
           ## arguments and raising standard exceptions. Servers are encouraged
           ## to simply pass on real IO objects, although it is recognized that
           ## this approach is not directly compatible with SPDY and HTTP 2.0.
-          ## 
+          ##
           ## IO provided in rack.hijack_io should preference the
           ## IO::WaitReadable and IO::WaitWritable APIs wherever supported.
-          ## 
+          ##
           ## There is a deliberate lack of full specification around
           ## rack.hijack_io, as semantics will change from server to server.
           ## Users are encouraged to utilize this API with a knowledge of their
@@ -487,10 +552,10 @@ module Rack
           io
         end
       else
-        ## 
+        ##
         ## If rack.hijack? is false, then rack.hijack should not be set.
         assert("rack.hijack? is false, but rack.hijack is present") { env['rack.hijack'].nil? }
-        ## 
+        ##
         ## If rack.hijack? is false, then rack.hijack_io should not be set.
         assert("rack.hijack? is false, but rack.hijack_io is present") { env['rack.hijack_io'].nil? }
       end
@@ -509,7 +574,7 @@ module Rack
       ## <tt>rack.hijack</tt> to an object that responds to <tt>call</tt>
       ## accepting an argument that conforms to the <tt>rack.hijack_io</tt>
       ## protocol.
-      ## 
+      ##
       ## After the headers have been sent, and this hijack callback has been
       ## called, the application is now responsible for the remaining lifecycle
       ## of the IO. The application is also responsible for maintaining HTTP
@@ -518,7 +583,7 @@ module Rack
       ## HTTP/1.1, and not Connection:keep-alive, as there is no protocol for
       ## returning hijacked sockets to the web server. For that purpose, use the
       ## body streaming API instead (progressively yielding strings via each).
-      ## 
+      ##
       ## Servers must ignore the <tt>body</tt> part of the response tuple when
       ## the <tt>rack.hijack</tt> response API is in use.
 
@@ -531,7 +596,7 @@ module Rack
           original_hijack.call HijackWrapper.new(io)
         end
       else
-        ## 
+        ##
         ## The special response header <tt>rack.hijack</tt> must only be set
         ## if the request env has <tt>rack.hijack?</tt> <tt>true</tt>.
         assert('rack.hijack header must not be present if server does not support hijacking') {
@@ -570,21 +635,17 @@ module Rack
         assert("header key must be a string, was #{key.class}") {
           key.kind_of? String
         }
-        ## The header must not contain a +Status+ key,
+        ## The header must not contain a +Status+ key.
         assert("header must not contain Status") { key.downcase != "status" }
-        ## contain keys with <tt>:</tt> or newlines in their name,
-        assert("header names must not contain : or \\n") { key !~ /[:\n]/ }
-        ## contain keys names that end in <tt>-</tt> or <tt>_</tt>,
-        assert("header names must not end in - or _") { key !~ /[-_]\z/ }
-        ## but only contain keys that consist of
-        ## letters, digits, <tt>_</tt> or <tt>-</tt> and start with a letter.
-        assert("invalid header name: #{key}") { key =~ /\A[a-zA-Z][a-zA-Z0-9_-]*\z/ }
+        ## The header must conform to RFC7230 token specification, i.e. cannot
+        ## contain non-printable ASCII, DQUOTE or "(),/:;<=>?@[\]{}".
+        assert("invalid header name: #{key}") { key !~ /[\(\),\/:;<=>\?@\[\\\]{}[:cntrl:]]/ }
 
         ## The values of the header must be Strings,
         assert("a header value must be a String, but the value of " +
           "'#{key}' is a #{value.class}") { value.kind_of? String }
         ## consisting of lines (for multiple header values, e.g. multiple
-        ## <tt>Set-Cookie</tt> values) seperated by "\n".
+        ## <tt>Set-Cookie</tt> values) separated by "\\n".
         value.split("\n").each { |item|
           ## The lines must not contain characters below 037.
           assert("invalid header value #{key}: #{item.inspect}") {
@@ -660,7 +721,7 @@ module Rack
       ##
       ## If the Body responds to +close+, it will be called after iteration. If
       ## the body is replaced by a middleware after action, the original body
-      ## must be closed first, if it repsonds to close.
+      ## must be closed first, if it responds to close.
       # XXX howto: assert("Body has not been closed") { @closed }
 
 

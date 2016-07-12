@@ -51,7 +51,7 @@ module Rack
     end
 
     def initialize(default_app = nil,&block)
-      @use, @map, @run = [], nil, default_app
+      @use, @map, @run, @warmup = [], nil, default_app, nil
       instance_eval(&block) if block_given?
     end
 
@@ -73,7 +73,7 @@ module Rack
     #   end
     #
     #   use Middleware
-    #   run lambda { |env| [200, { "Content-Type => "text/plain" }, ["OK"]] }
+    #   run lambda { |env| [200, { "Content-Type" => "text/plain" }, ["OK"]] }
     #
     # All requests through to this application will first be processed by the middleware class.
     # The +call+ method in this example sets an additional environment key which then can be
@@ -104,6 +104,19 @@ module Rack
       @run = app
     end
 
+    # Takes a lambda or block that is used to warm-up the application.
+    #
+    #   warmup do |app|
+    #     client = Rack::MockRequest.new(app)
+    #     client.get('/')
+    #   end
+    #
+    #   use SomeMiddleware
+    #   run MyApp
+    def warmup(prc=nil, &block)
+      @warmup = prc || block
+    end
+
     # Creates a route within the application.
     #
     #   Rack::Builder.app do
@@ -131,7 +144,9 @@ module Rack
     def to_app
       app = @map ? generate_map(@run, @map) : @run
       fail "missing run or map statement" unless app
-      @use.reverse.inject(app) { |a,e| e[a] }
+      app = @use.reverse.inject(app) { |a,e| e[a] }
+      @warmup.call(app) if @warmup
+      app
     end
 
     def call(env)
@@ -142,7 +157,7 @@ module Rack
 
     def generate_map(default_app, mapping)
       mapped = default_app ? {'/' => default_app} : {}
-      mapping.each { |r,b| mapped[r] = self.class.new(default_app, &b) }
+      mapping.each { |r,b| mapped[r] = self.class.new(default_app, &b).to_app }
       URLMap.new(mapped)
     end
   end
