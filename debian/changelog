@@ -1,3 +1,9 @@
+ruby-rack (1.5.2-3+deb8u1pexip2) pexip; urgency=low
+
+  * Resync with Debian
+
+ -- John-Mark Bell <jmb@pexip.com>  Tue, 18 Apr 2017 09:02:16 +0100
+
 ruby-rack (1.5.2-3+deb8u1pexip1) pexip; urgency=low
 
   * New upstream release
