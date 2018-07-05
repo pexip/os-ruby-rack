@@ -11,7 +11,7 @@
 
 module Rack
   # The Rack protocol version number implemented.
-  VERSION = [1,2]
+  VERSION = [1,3]
 
   # Return the Rack protocol version as a dotted string.
   def self.version
@@ -20,8 +20,18 @@ module Rack
 
   # Return the Rack release as a dotted string.
   def self.release
-    "1.5"
+    "1.6.4"
   end
+  PATH_INFO      = 'PATH_INFO'.freeze
+  REQUEST_METHOD = 'REQUEST_METHOD'.freeze
+  SCRIPT_NAME    = 'SCRIPT_NAME'.freeze
+  QUERY_STRING   = 'QUERY_STRING'.freeze
+  CACHE_CONTROL  = 'Cache-Control'.freeze
+  CONTENT_LENGTH = 'Content-Length'.freeze
+  CONTENT_TYPE   = 'Content-Type'.freeze
+
+  GET  = 'GET'.freeze
+  HEAD = 'HEAD'.freeze
 
   autoload :Builder, "rack/builder"
   autoload :BodyProxy, "rack/body_proxy"
@@ -53,6 +63,7 @@ module Rack
   autoload :ShowExceptions, "rack/showexceptions"
   autoload :ShowStatus, "rack/showstatus"
   autoload :Static, "rack/static"
+  autoload :TempfileReaper, "rack/tempfile_reaper"
   autoload :URLMap, "rack/urlmap"
   autoload :Utils, "rack/utils"
   autoload :Multipart, "rack/multipart"

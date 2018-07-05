@@ -1,4 +1,5 @@
 require 'rack/file'
+require 'rack/body_proxy'
 
 module Rack
 
@@ -22,7 +23,7 @@ module Rack
   #
   # Nginx supports the X-Accel-Redirect header. This is similar to X-Sendfile
   # but requires parts of the filesystem to be mapped into a private URL
-  # hierarachy.
+  # hierarchy.
   #
   # The following example shows the Nginx configuration required to create
   # a private "/files/" area, enable X-Accel-Redirect, and pass the special
@@ -115,22 +116,26 @@ module Rack
         when 'X-Accel-Redirect'
           path = F.expand_path(body.to_path)
           if url = map_accel_path(env, path)
-            headers['Content-Length'] = '0'
+            headers[CONTENT_LENGTH] = '0'
             headers[type] = url
-            body.close if body.respond_to?(:close)
-            body = []
+            obody = body
+            body = Rack::BodyProxy.new([]) do
+              obody.close if obody.respond_to?(:close)
+            end
           else
             env['rack.errors'].puts "X-Accel-Mapping header missing"
           end
         when 'X-Sendfile', 'X-Lighttpd-Send-File'
           path = F.expand_path(body.to_path)
-          headers['Content-Length'] = '0'
+          headers[CONTENT_LENGTH] = '0'
           headers[type] = path
-          body.close if body.respond_to?(:close)
-          body = []
+          obody = body
+          body = Rack::BodyProxy.new([]) do
+            obody.close if obody.respond_to?(:close)
+          end
         when '', nil
         else
-          env['rack.errors'].puts "Unknown x-sendfile variation: '#{variation}'.\n"
+          env['rack.errors'].puts "Unknown x-sendfile variation: '#{type}'.\n"
         end
       end
       [status, headers, body]

@@ -20,15 +20,18 @@ module Rack
     end
 
     def call(env)
-      case env['REQUEST_METHOD']
+      case env[REQUEST_METHOD]
       when "GET", "HEAD"
         status, headers, body = @app.call(env)
         headers = Utils::HeaderHash.new(headers)
         if status == 200 && fresh?(env, headers)
           status = 304
-          headers.delete('Content-Type')
-          headers.delete('Content-Length')
-          body = []
+          headers.delete(CONTENT_TYPE)
+          headers.delete(CONTENT_LENGTH)
+          original_body = body
+          body = Rack::BodyProxy.new([]) do
+            original_body.close if original_body.respond_to?(:close)
+          end
         end
         [status, headers, body]
       else
@@ -61,7 +64,16 @@ module Rack
     end
 
     def to_rfc2822(since)
-      Time.rfc2822(since) rescue nil
+      # shortest possible valid date is the obsolete: 1 Nov 97 09:55 A
+      # anything shorter is invalid, this avoids exceptions for common cases
+      # most common being the empty string
+      if since && since.length >= 16
+        # NOTE: there is no trivial way to write this in a non execption way
+        #   _rfc2822 returns a hash but is not that usable
+        Time.rfc2822(since) rescue nil
+      else
+        nil
+      end
     end
   end
 end

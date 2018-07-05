@@ -30,6 +30,44 @@ describe Rack::Multipart do
     params["text"].should.equal "contents"
   end
 
+  if "<3".respond_to?(:force_encoding)
+  should "set US_ASCII encoding based on charset" do
+    env = Rack::MockRequest.env_for("/", multipart_fixture(:content_type_and_no_filename))
+    params = Rack::Multipart.parse_multipart(env)
+    params["text"].encoding.should.equal Encoding::US_ASCII
+
+    # I'm not 100% sure if making the param name encoding match the
+    # Content-Type charset is the right thing to do.  We should revisit this.
+    params.keys.each do |key|
+      key.encoding.should.equal Encoding::US_ASCII
+    end
+  end
+
+  should "set BINARY encoding on things without content type" do
+    env = Rack::MockRequest.env_for("/", multipart_fixture(:none))
+    params = Rack::Multipart.parse_multipart(env)
+    params["submit-name"].encoding.should.equal Encoding::UTF_8
+  end
+
+  should "set UTF8 encoding on names of things without content type" do
+    env = Rack::MockRequest.env_for("/", multipart_fixture(:none))
+    params = Rack::Multipart.parse_multipart(env)
+    params.keys.each do |key|
+      key.encoding.should.equal Encoding::UTF_8
+    end
+  end
+
+  should "default text to UTF8" do
+    env = Rack::MockRequest.env_for("/", multipart_fixture(:text))
+    params = Rack::Multipart.parse_multipart(env)
+    params['submit-name'].encoding.should.equal Encoding::UTF_8
+    params['submit-name-with-content'].encoding.should.equal Encoding::UTF_8
+    params.keys.each do |key|
+      key.encoding.should.equal Encoding::UTF_8
+    end
+  end
+  end
+
   should "raise RangeError if the key space is exhausted" do
     env = Rack::MockRequest.env_for("/", multipart_fixture(:content_type_and_no_filename))
 
@@ -115,6 +153,33 @@ describe Rack::Multipart do
     params["files"][:tempfile].read.should.equal "contents"
   end
 
+  should "preserve extension in the created tempfile" do
+    env = Rack::MockRequest.env_for("/", multipart_fixture(:text))
+    params = Rack::Multipart.parse_multipart(env)
+    File.extname(params["files"][:tempfile].path).should.equal ".txt"
+  end
+
+  should "parse multipart upload with text file with no name field" do
+    env = Rack::MockRequest.env_for("/", multipart_fixture(:filename_and_no_name))
+    params = Rack::Multipart.parse_multipart(env)
+    params["file1.txt"][:type].should.equal "text/plain"
+    params["file1.txt"][:filename].should.equal "file1.txt"
+    params["file1.txt"][:head].should.equal "Content-Disposition: form-data; " +
+      "filename=\"file1.txt\"\r\n" +
+      "Content-Type: text/plain\r\n"
+    params["file1.txt"][:name].should.equal "file1.txt"
+    params["file1.txt"][:tempfile].read.should.equal "contents"
+  end
+
+  should "parse multipart upload file using custom tempfile class" do
+    env = Rack::MockRequest.env_for("/", multipart_fixture(:text))
+    my_tempfile = ""
+    env['rack.multipart.tempfile_factory'] = lambda { |filename, content_type| my_tempfile }
+    params = Rack::Multipart.parse_multipart(env)
+    params["files"][:tempfile].object_id.should.equal my_tempfile.object_id
+    my_tempfile.should.equal "contents"
+  end
+
   should "parse multipart upload with nested parameters" do
     env = Rack::MockRequest.env_for("/", multipart_fixture(:nested))
     params = Rack::Multipart.parse_multipart(env)
@@ -166,12 +231,34 @@ describe Rack::Multipart do
     params["files"][:tempfile].read.should.equal "contents"
   end
 
+  should "parse multipart upload with filename with invalid characters" do
+    env = Rack::MockRequest.env_for("/", multipart_fixture(:invalid_character))
+    params = Rack::Multipart.parse_multipart(env)
+    params["files"][:type].should.equal "text/plain"
+    params["files"][:filename].should.match(/invalid/)
+    head = "Content-Disposition: form-data; " +
+      "name=\"files\"; filename=\"invalid\xC3.txt\"\r\n" +
+      "Content-Type: text/plain\r\n"
+    head = head.force_encoding("ASCII-8BIT") if head.respond_to?(:force_encoding)
+    params["files"][:head].should.equal head
+    params["files"][:name].should.equal "files"
+    params["files"][:tempfile].read.should.equal "contents"
+  end
+
   should "not include file params if no file was selected" do
     env = Rack::MockRequest.env_for("/", multipart_fixture(:none))
     params = Rack::Multipart.parse_multipart(env)
     params["submit-name"].should.equal "Larry"
     params["files"].should.equal nil
     params.keys.should.not.include "files"
+  end
+
+  should "parse multipart/mixed" do
+    env = Rack::MockRequest.env_for("/", multipart_fixture(:mixed_files))
+    params = Rack::Utils::Multipart.parse_multipart(env)
+    params["foo"].should.equal "bar"
+    params["files"].should.be.instance_of String
+    params["files"].size.should.equal 252
   end
 
   should "parse multipart/mixed" do
@@ -364,22 +451,56 @@ Content-Type: image/jpeg\r
   end
 
   it "builds complete params with the chunk size of 16384 slicing exactly on boundary" do
-    data = File.open(multipart_file("fail_16384_nofile"), 'rb') { |f| f.read }.gsub(/\n/, "\r\n")
-    options = {
-      "CONTENT_TYPE" => "multipart/form-data; boundary=----WebKitFormBoundaryWsY0GnpbI5U7ztzo",
-      "CONTENT_LENGTH" => data.length.to_s,
-      :input => StringIO.new(data)
-    }
-    env = Rack::MockRequest.env_for("/", options)
-    params = Rack::Multipart.parse_multipart(env)
+    begin
+      previous_limit = Rack::Utils.multipart_part_limit
+      Rack::Utils.multipart_part_limit = 256
 
-    params.should.not.equal nil
-    params.keys.should.include "AAAAAAAAAAAAAAAAAAA"
-    params["AAAAAAAAAAAAAAAAAAA"].keys.should.include "PLAPLAPLA_MEMMEMMEMM_ATTRATTRER"
-    params["AAAAAAAAAAAAAAAAAAA"]["PLAPLAPLA_MEMMEMMEMM_ATTRATTRER"].keys.should.include "new"
-    params["AAAAAAAAAAAAAAAAAAA"]["PLAPLAPLA_MEMMEMMEMM_ATTRATTRER"]["new"].keys.should.include "-2"
-    params["AAAAAAAAAAAAAAAAAAA"]["PLAPLAPLA_MEMMEMMEMM_ATTRATTRER"]["new"]["-2"].keys.should.include "ba_unit_id"
-    params["AAAAAAAAAAAAAAAAAAA"]["PLAPLAPLA_MEMMEMMEMM_ATTRATTRER"]["new"]["-2"]["ba_unit_id"].should.equal "1017"
+      data = File.open(multipart_file("fail_16384_nofile"), 'rb') { |f| f.read }.gsub(/\n/, "\r\n")
+      options = {
+        "CONTENT_TYPE" => "multipart/form-data; boundary=----WebKitFormBoundaryWsY0GnpbI5U7ztzo",
+        "CONTENT_LENGTH" => data.length.to_s,
+        :input => StringIO.new(data)
+      }
+      env = Rack::MockRequest.env_for("/", options)
+      params = Rack::Multipart.parse_multipart(env)
+
+      params.should.not.equal nil
+      params.keys.should.include "AAAAAAAAAAAAAAAAAAA"
+      params["AAAAAAAAAAAAAAAAAAA"].keys.should.include "PLAPLAPLA_MEMMEMMEMM_ATTRATTRER"
+      params["AAAAAAAAAAAAAAAAAAA"]["PLAPLAPLA_MEMMEMMEMM_ATTRATTRER"].keys.should.include "new"
+      params["AAAAAAAAAAAAAAAAAAA"]["PLAPLAPLA_MEMMEMMEMM_ATTRATTRER"]["new"].keys.should.include "-2"
+      params["AAAAAAAAAAAAAAAAAAA"]["PLAPLAPLA_MEMMEMMEMM_ATTRATTRER"]["new"]["-2"].keys.should.include "ba_unit_id"
+      params["AAAAAAAAAAAAAAAAAAA"]["PLAPLAPLA_MEMMEMMEMM_ATTRATTRER"]["new"]["-2"]["ba_unit_id"].should.equal "1017"
+    ensure
+      Rack::Utils.multipart_part_limit = previous_limit
+    end
+  end
+
+ should "not reach a multi-part limit" do
+    begin
+      previous_limit = Rack::Utils.multipart_part_limit
+      Rack::Utils.multipart_part_limit = 4
+
+      env = Rack::MockRequest.env_for '/', multipart_fixture(:three_files_three_fields)
+      params = Rack::Multipart.parse_multipart(env)
+      params['reply'].should.equal 'yes'
+      params['to'].should.equal 'people'
+      params['from'].should.equal 'others'
+    ensure
+      Rack::Utils.multipart_part_limit = previous_limit
+    end
+  end
+
+  should "reach a multipart limit" do
+    begin
+      previous_limit = Rack::Utils.multipart_part_limit
+      Rack::Utils.multipart_part_limit = 3
+
+      env = Rack::MockRequest.env_for '/', multipart_fixture(:three_files_three_fields)
+      lambda { Rack::Multipart.parse_multipart(env) }.should.raise(Rack::Multipart::MultipartPartLimitError)
+    ensure
+      Rack::Utils.multipart_part_limit = previous_limit
+    end
   end
 
   should "return nil if no UploadedFiles were used" do
@@ -440,6 +561,30 @@ contents\r
     params = Rack::Utils::Multipart.parse_multipart(env)
 
     params["file"][:filename].should.equal('long' * 100)
+  end
+
+  should "support mixed case metadata" do
+    file = multipart_file(:text)
+    data = File.open(file, 'rb') { |io| io.read }
+
+    type = "Multipart/Form-Data; Boundary=AaB03x"
+    length = data.respond_to?(:bytesize) ? data.bytesize : data.size
+
+    e = { "CONTENT_TYPE" => type,
+      "CONTENT_LENGTH" => length.to_s,
+      :input => StringIO.new(data) }
+
+    env = Rack::MockRequest.env_for("/", e)
+    params = Rack::Multipart.parse_multipart(env)
+    params["submit-name"].should.equal "Larry"
+    params["submit-name-with-content"].should.equal "Berry"
+    params["files"][:type].should.equal "text/plain"
+    params["files"][:filename].should.equal "file1.txt"
+    params["files"][:head].should.equal "Content-Disposition: form-data; " +
+      "name=\"files\"; filename=\"file1.txt\"\r\n" +
+      "Content-Type: text/plain\r\n"
+    params["files"][:name].should.equal "files"
+    params["files"][:tempfile].read.should.equal "contents"
   end
 
 end

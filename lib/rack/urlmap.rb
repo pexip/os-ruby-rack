@@ -41,16 +41,17 @@ module Rack
     end
 
     def call(env)
-      path = env["PATH_INFO"]
+      path = env[PATH_INFO]
       script_name = env['SCRIPT_NAME']
       hHost = env['HTTP_HOST']
       sName = env['SERVER_NAME']
       sPort = env['SERVER_PORT']
 
       @mapping.each do |host, location, match, app|
-        unless hHost == host \
-            || sName == host \
-            || (!host && (hHost == sName || hHost == sName+':'+sPort))
+        unless casecmp?(hHost, host) \
+            || casecmp?(sName, host) \
+            || (!host && (casecmp?(hHost, sName) ||
+                          casecmp?(hHost, sName+':'+sPort)))
           next
         end
 
@@ -65,11 +66,24 @@ module Rack
         return app.call(env)
       end
 
-      [404, {"Content-Type" => "text/plain", "X-Cascade" => "pass"}, ["Not Found: #{path}"]]
+      [404, {CONTENT_TYPE => "text/plain", "X-Cascade" => "pass"}, ["Not Found: #{path}"]]
 
     ensure
       env['PATH_INFO'] = path
       env['SCRIPT_NAME'] = script_name
+    end
+
+    private
+    def casecmp?(v1, v2)
+      # if both nil, or they're the same string
+      return true if v1 == v2
+
+      # if either are nil... (but they're not the same)
+      return false if v1.nil?
+      return false if v2.nil?
+
+      # otherwise check they're not case-insensitive the same
+      v1.casecmp(v2).zero?
     end
   end
 end

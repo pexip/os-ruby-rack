@@ -6,7 +6,6 @@ task :default => [:test]
 desc "Install gem dependencies"
 task :deps do
   require 'rubygems'
-  require 'rbconfig'
   spec = Gem::Specification.load('rack.gemspec')
   spec.dependencies.each do |dep|
     reqs = dep.requirements_list
@@ -33,7 +32,7 @@ task :officialrelease do
 end
 
 task :officialrelease_really => %w[SPEC dist gem] do
-  sh "sha1sum #{release}.tar.gz #{release}.gem"
+  sh "shasum #{release}.tar.gz #{release}.gem"
 end
 
 def release
@@ -42,8 +41,8 @@ end
 
 desc "Make binaries executable"
 task :chmod do
-  Dir["bin/*"].each { |binary| File.chmod(0775, binary) }
-  Dir["test/cgi/test*"].each { |binary| File.chmod(0775, binary) }
+  Dir["bin/*"].each { |binary| File.chmod(0755, binary) }
+  Dir["test/cgi/test*"].each { |binary| File.chmod(0755, binary) }
 end
 
 desc "Generate a ChangeLog"
@@ -91,7 +90,7 @@ task :test => 'SPEC' do
 end
 
 desc "Run all the tests we run on CI"
-task :ci => :test
+task :ci => :fulltest
 
 desc "Run all the tests"
 task :fulltest => %w[SPEC chmod] do

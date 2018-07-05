@@ -17,8 +17,11 @@ module Rack
       end
 
       def self.valid_options
+        environment  = ENV['RACK_ENV'] || 'development'
+        default_host = environment == 'development' ? 'localhost' : '0.0.0.0'
+
         {
-          "Host=HOST" => "Hostname to listen on (default: localhost)",
+          "Host=HOST" => "Hostname to listen on (default: #{default_host})",
           "Port=PORT" => "Port to listen on (default: 8080)",
         }
       end
@@ -32,9 +35,9 @@ module Rack
         env = Hash[request]
         env.delete "HTTP_CONTENT_TYPE"
         env.delete "HTTP_CONTENT_LENGTH"
-        env["REQUEST_PATH"], env["QUERY_STRING"] = env["REQUEST_URI"].split('?', 2)
+        env["REQUEST_PATH"], env[QUERY_STRING] = env["REQUEST_URI"].split('?', 2)
         env["HTTP_VERSION"] ||= env["SERVER_PROTOCOL"]
-        env["PATH_INFO"] = env["REQUEST_PATH"]
+        env[PATH_INFO] = env["REQUEST_PATH"]
         env["QUERY_STRING"] ||= ""
         env["SCRIPT_NAME"] = ""
 
