@@ -12,7 +12,7 @@ Vcs-Browser: http://anonscm.debian.org/gitweb?p=pkg-ruby-extras/ruby-rack.git;a=
 Homepage: http://rack.rubyforge.org
 XS-Ruby-Versions: all
 Testsuite: autopkgtest
-XS-Pexip-Upstream: http://ftp.debian.org/debian/ jessie
+XS-Pexip-Upstream: http://ftp.debian.org/debian/ stretch
 
 Package: ruby-rack
 Architecture: all
