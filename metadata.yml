@@ -1,68 +1,66 @@
---- !ruby/object:Gem::Specification 
+--- !ruby/object:Gem::Specification
 name: rack
-version: !ruby/object:Gem::Version 
-  hash: 7
-  prerelease: 
-  segments: 
-  - 1
-  - 5
-  - 2
-  version: 1.5.2
+version: !ruby/object:Gem::Version
+  version: 1.6.4
 platform: ruby
-authors: 
+authors:
 - Christian Neukirchen
 autorequire: 
 bindir: bin
 cert_chain: []
-
-date: 2013-02-08 00:00:00 Z
-dependencies: 
-- !ruby/object:Gem::Dependency 
+date: 2015-06-18 00:00:00.000000000 Z
+dependencies:
+- !ruby/object:Gem::Dependency
   name: bacon
-  prerelease: false
-  requirement: &id001 !ruby/object:Gem::Requirement 
-    none: false
-    requirements: 
+  requirement: !ruby/object:Gem::Requirement
+    requirements:
     - - ">="
-      - !ruby/object:Gem::Version 
-        hash: 3
-        segments: 
-        - 0
-        version: "0"
+      - !ruby/object:Gem::Version
+        version: '0'
   type: :development
-  version_requirements: *id001
-- !ruby/object:Gem::Dependency 
+  prerelease: false
+  version_requirements: !ruby/object:Gem::Requirement
+    requirements:
+    - - ">="
+      - !ruby/object:Gem::Version
+        version: '0'
+- !ruby/object:Gem::Dependency
   name: rake
-  prerelease: false
-  requirement: &id002 !ruby/object:Gem::Requirement 
-    none: false
-    requirements: 
+  requirement: !ruby/object:Gem::Requirement
+    requirements:
     - - ">="
-      - !ruby/object:Gem::Version 
-        hash: 3
-        segments: 
-        - 0
-        version: "0"
+      - !ruby/object:Gem::Version
+        version: '0'
   type: :development
-  version_requirements: *id002
+  prerelease: false
+  version_requirements: !ruby/object:Gem::Requirement
+    requirements:
+    - - ">="
+      - !ruby/object:Gem::Version
+        version: '0'
 description: |
   Rack provides a minimal, modular and adaptable interface for developing
   web applications in Ruby.  By wrapping HTTP requests and responses in
   the simplest way possible, it unifies and distills the API for web
   servers, web frameworks, and software in between (the so-called
   middleware) into a single method call.
-  
-  Also see http://rack.github.com/.
 
+  Also see http://rack.github.io/.
 email: chneukirchen@gmail.com
-executables: 
+executables:
 - rackup
 extensions: []
-
-extra_rdoc_files: 
+extra_rdoc_files:
 - README.rdoc
 - KNOWN-ISSUES
-files: 
+- HISTORY.md
+files:
+- COPYING
+- HISTORY.md
+- KNOWN-ISSUES
+- README.rdoc
+- Rakefile
+- SPEC
 - bin/rackup
 - contrib/rack.png
 - contrib/rack.svg
@@ -71,6 +69,7 @@ files:
 - example/lobster.ru
 - example/protectedlobster.rb
 - example/protectedlobster.ru
+- lib/rack.rb
 - lib/rack/auth/abstract/handler.rb
 - lib/rack/auth/abstract/request.rb
 - lib/rack/auth/basic.rb
@@ -94,6 +93,7 @@ files:
 - lib/rack/directory.rb
 - lib/rack/etag.rb
 - lib/rack/file.rb
+- lib/rack/handler.rb
 - lib/rack/handler/cgi.rb
 - lib/rack/handler/evented_mongrel.rb
 - lib/rack/handler/fastcgi.rb
@@ -103,7 +103,6 @@ files:
 - lib/rack/handler/swiftiplied_mongrel.rb
 - lib/rack/handler/thin.rb
 - lib/rack/handler/webrick.rb
-- lib/rack/handler.rb
 - lib/rack/head.rb
 - lib/rack/lint.rb
 - lib/rack/lobster.rb
@@ -112,10 +111,10 @@ files:
 - lib/rack/methodoverride.rb
 - lib/rack/mime.rb
 - lib/rack/mock.rb
+- lib/rack/multipart.rb
 - lib/rack/multipart/generator.rb
 - lib/rack/multipart/parser.rb
 - lib/rack/multipart/uploaded_file.rb
-- lib/rack/multipart.rb
 - lib/rack/nulllogger.rb
 - lib/rack/recursive.rb
 - lib/rack/reloader.rb
@@ -132,10 +131,11 @@ files:
 - lib/rack/showexceptions.rb
 - lib/rack/showstatus.rb
 - lib/rack/static.rb
+- lib/rack/tempfile_reaper.rb
 - lib/rack/urlmap.rb
-- lib/rack/utils/okjson.rb
 - lib/rack/utils.rb
-- lib/rack.rb
+- lib/rack/utils/okjson.rb
+- rack.gemspec
 - test/builder/anything.rb
 - test/builder/comment.ru
 - test/builder/end.ru
@@ -148,6 +148,7 @@ files:
 - test/cgi/assets/javascripts/app.js
 - test/cgi/assets/stylesheets/app.css
 - test/cgi/lighttpd.conf
+- test/cgi/lighttpd.errors
 - test/cgi/rackup_stub.rb
 - test/cgi/sample_rackup.ru
 - test/cgi/test
@@ -162,6 +163,7 @@ files:
 - test/multipart/fail_16384_nofile
 - test/multipart/file1.txt
 - test/multipart/filename_and_modification_param
+- test/multipart/filename_and_no_name
 - test/multipart/filename_with_escaped_quotes
 - test/multipart/filename_with_escaped_quotes_and_modification_param
 - test/multipart/filename_with_percent_escaped_quotes
@@ -170,11 +172,13 @@ files:
 - test/multipart/filename_with_unescaped_percentages3
 - test/multipart/filename_with_unescaped_quotes
 - test/multipart/ie
+- test/multipart/invalid_character
 - test/multipart/mixed_files
 - test/multipart/nested
 - test/multipart/none
 - test/multipart/semicolon
 - test/multipart/text
+- test/multipart/three_files_three_fields
 - test/multipart/webkit
 - test/rackup/config.ru
 - test/registering_handler/rack/handler/registering_myself.rb
@@ -221,55 +225,42 @@ files:
 - test/spec_showexceptions.rb
 - test/spec_showstatus.rb
 - test/spec_static.rb
+- test/spec_tempfile_reaper.rb
 - test/spec_thin.rb
 - test/spec_urlmap.rb
 - test/spec_utils.rb
+- test/spec_version.rb
 - test/spec_webrick.rb
 - test/static/another/index.html
 - test/static/index.html
 - test/testrequest.rb
 - test/unregistered_handler/rack/handler/unregistered.rb
 - test/unregistered_handler/rack/handler/unregistered_long_one.rb
-- COPYING
-- KNOWN-ISSUES
-- rack.gemspec
-- Rakefile
-- README.rdoc
-- SPEC
-homepage: http://rack.github.com/
-licenses: 
+homepage: http://rack.github.io/
+licenses:
 - MIT
+metadata: {}
 post_install_message: 
 rdoc_options: []
-
-require_paths: 
+require_paths:
 - lib
-required_ruby_version: !ruby/object:Gem::Requirement 
-  none: false
-  requirements: 
+required_ruby_version: !ruby/object:Gem::Requirement
+  requirements:
   - - ">="
-    - !ruby/object:Gem::Version 
-      hash: 3
-      segments: 
-      - 0
-      version: "0"
-required_rubygems_version: !ruby/object:Gem::Requirement 
-  none: false
-  requirements: 
+    - !ruby/object:Gem::Version
+      version: '0'
+required_rubygems_version: !ruby/object:Gem::Requirement
+  requirements:
   - - ">="
-    - !ruby/object:Gem::Version 
-      hash: 3
-      segments: 
-      - 0
-      version: "0"
+    - !ruby/object:Gem::Version
+      version: '0'
 requirements: []
-
 rubyforge_project: rack
-rubygems_version: 1.8.24
+rubygems_version: 2.4.5
 signing_key: 
-specification_version: 3
+specification_version: 4
 summary: a modular Ruby webserver interface
-test_files: 
+test_files:
 - test/spec_auth_basic.rb
 - test/spec_auth_digest.rb
 - test/spec_body_proxy.rb
@@ -313,8 +304,9 @@ test_files:
 - test/spec_showexceptions.rb
 - test/spec_showstatus.rb
 - test/spec_static.rb
+- test/spec_tempfile_reaper.rb
 - test/spec_thin.rb
 - test/spec_urlmap.rb
 - test/spec_utils.rb
+- test/spec_version.rb
 - test/spec_webrick.rb
-has_rdoc: 

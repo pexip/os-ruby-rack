@@ -8,10 +8,6 @@ module Rack
   #   req = Rack::Request.new(env)
   #   req.post?
   #   req.params["data"]
-  #
-  # The environment hash passed will store a reference to the Request object
-  # instantiated so that it will only instantiate if an instance of the Request
-  # object doesn't already exist.
 
   class Request
     # The environment of the request.
@@ -22,10 +18,10 @@ module Rack
     end
 
     def body;            @env["rack.input"]                       end
-    def script_name;     @env["SCRIPT_NAME"].to_s                 end
-    def path_info;       @env["PATH_INFO"].to_s                   end
+    def script_name;     @env[SCRIPT_NAME].to_s                   end
+    def path_info;       @env[PATH_INFO].to_s                     end
     def request_method;  @env["REQUEST_METHOD"]                   end
-    def query_string;    @env["QUERY_STRING"].to_s                end
+    def query_string;    @env[QUERY_STRING].to_s                  end
     def content_length;  @env['CONTENT_LENGTH']                   end
 
     def content_type
@@ -56,7 +52,7 @@ module Rack
       return {} if content_type.nil?
       Hash[*content_type.split(/\s*[;,]\s*/)[1..-1].
         collect { |s| s.split('=', 2) }.
-        map { |k,v| [k.downcase, v] }.flatten]
+        map { |k,v| [k.downcase, strip_doublequotes(v)] }.flatten]
     end
 
     # The character set of the request body if a "charset" media type
@@ -100,6 +96,8 @@ module Rack
         port.to_i
       elsif @env.has_key?("HTTP_X_FORWARDED_HOST")
         DEFAULT_PORTS[scheme]
+      elsif @env.has_key?("HTTP_X_FORWARDED_PROTO")
+        DEFAULT_PORTS[@env['HTTP_X_FORWARDED_PROTO'].split(',')[0]]
       else
         @env["SERVER_PORT"].to_i
       end
@@ -107,7 +105,7 @@ module Rack
 
     def host
       # Remove port number.
-      host_with_port.to_s.gsub(/:\d+\z/, '')
+      host_with_port.to_s.sub(/:\d+\z/, '')
     end
 
     def script_name=(s); @env["SCRIPT_NAME"] = s.to_s             end
@@ -118,13 +116,16 @@ module Rack
     def delete?;  request_method == "DELETE"  end
 
     # Checks the HTTP request method (or verb) to see if it was of type GET
-    def get?;     request_method == "GET"     end
+    def get?;     request_method == GET       end
 
     # Checks the HTTP request method (or verb) to see if it was of type HEAD
-    def head?;    request_method == "HEAD"    end
+    def head?;    request_method == HEAD      end
 
     # Checks the HTTP request method (or verb) to see if it was of type OPTIONS
     def options?; request_method == "OPTIONS" end
+
+    # Checks the HTTP request method (or verb) to see if it was of type LINK
+    def link?;    request_method == "LINK"    end
 
     # Checks the HTTP request method (or verb) to see if it was of type PATCH
     def patch?;   request_method == "PATCH"   end
@@ -137,6 +138,9 @@ module Rack
 
     # Checks the HTTP request method (or verb) to see if it was of type TRACE
     def trace?;   request_method == "TRACE"   end
+
+    # Checks the HTTP request method (or verb) to see if it was of type UNLINK
+    def unlink?;  request_method == "UNLINK"  end
 
 
     # The set of form-data media-types. Requests that do not indicate
@@ -169,7 +173,7 @@ module Rack
     # Content-Type header is provided and the request_method is POST.
     def form_data?
       type = media_type
-      meth = env["rack.methodoverride.original_method"] || env['REQUEST_METHOD']
+      meth = env["rack.methodoverride.original_method"] || env[REQUEST_METHOD]
       (meth == 'POST' && type.nil?) || FORM_DATA_MEDIA_TYPES.include?(type)
     end
 
@@ -184,8 +188,9 @@ module Rack
       if @env["rack.request.query_string"] == query_string
         @env["rack.request.query_hash"]
       else
+        p = parse_query({ :query => query_string, :separator => '&;' })
         @env["rack.request.query_string"] = query_string
-        @env["rack.request.query_hash"]   = parse_query(query_string)
+        @env["rack.request.query_hash"]   = p
       end
     end
 
@@ -196,10 +201,9 @@ module Rack
     def POST
       if @env["rack.input"].nil?
         raise "Missing rack.input"
-      elsif @env["rack.request.form_input"].eql? @env["rack.input"]
+      elsif @env["rack.request.form_input"].equal? @env["rack.input"]
         @env["rack.request.form_hash"]
       elsif form_data? || parseable_data?
-        @env["rack.request.form_input"] = @env["rack.input"]
         unless @env["rack.request.form_hash"] = parse_multipart(env)
           form_vars = @env["rack.input"].read
 
@@ -208,10 +212,11 @@ module Rack
           form_vars.slice!(-1) if form_vars[-1] == ?\0
 
           @env["rack.request.form_vars"] = form_vars
-          @env["rack.request.form_hash"] = parse_query(form_vars)
+          @env["rack.request.form_hash"] = parse_query({ :query => form_vars, :separator => '&' })
 
           @env["rack.input"].rewind
         end
+        @env["rack.request.form_input"] = @env["rack.input"]
         @env["rack.request.form_hash"]
       else
         {}
@@ -329,14 +334,11 @@ module Rack
     end
 
     def accept_encoding
-      @env["HTTP_ACCEPT_ENCODING"].to_s.split(/\s*,\s*/).map do |part|
-        encoding, parameters = part.split(/\s*;\s*/, 2)
-        quality = 1.0
-        if parameters and /\Aq=([\d.]+)/ =~ parameters
-          quality = $1.to_f
-        end
-        [encoding, quality]
-      end
+      parse_http_accept_header(@env["HTTP_ACCEPT_ENCODING"])
+    end
+
+    def accept_language
+      parse_http_accept_header(@env["HTTP_ACCEPT_LANGUAGE"])
     end
 
     def trusted_proxy?(ip)
@@ -351,12 +353,6 @@ module Rack
 
       forwarded_ips = split_ip_addresses(@env['HTTP_X_FORWARDED_FOR'])
 
-      if client_ip = @env['HTTP_CLIENT_IP']
-        # If forwarded_ips doesn't include the client_ip, it might be an
-        # ip spoofing attempt, so we ignore HTTP_CLIENT_IP
-        return client_ip if forwarded_ips.include?(client_ip)
-      end
-
       return reject_trusted_ip_addresses(forwarded_ips).last || @env["REMOTE_ADDR"]
     end
 
@@ -370,11 +366,33 @@ module Rack
       end
 
       def parse_query(qs)
-        Utils.parse_nested_query(qs)
+        d = '&'
+        qs, d = qs[:query], qs[:separator] if Hash === qs
+        Utils.parse_nested_query(qs, d)
       end
 
       def parse_multipart(env)
         Rack::Multipart.parse_multipart(env)
       end
+
+      def parse_http_accept_header(header)
+        header.to_s.split(/\s*,\s*/).map do |part|
+          attribute, parameters = part.split(/\s*;\s*/, 2)
+          quality = 1.0
+          if parameters and /\Aq=([\d.]+)/ =~ parameters
+            quality = $1.to_f
+          end
+          [attribute, quality]
+        end
+      end
+
+  private
+    def strip_doublequotes(s)
+      if s[0] == ?" && s[-1] == ?"
+        s[1..-2]
+      else
+        s
+      end
+    end
   end
 end

@@ -1,4 +1,5 @@
 require 'openssl'
+require 'zlib'
 require 'rack/request'
 require 'rack/response'
 require 'rack/session/abstract/id'
@@ -78,18 +79,25 @@ module Rack
             ::Rack::Utils::OkJson.decode(super(str)) rescue nil
           end
         end
+
+        class ZipJSON < Base64
+          def encode(obj)
+            super(Zlib::Deflate.deflate(::Rack::Utils::OkJson.encode(obj)))
+          end
+
+          def decode(str)
+            return unless str
+            ::Rack::Utils::OkJson.decode(Zlib::Inflate.inflate(super(str)))
+          rescue
+            nil
+          end
+        end
       end
 
       # Use no encoding for session cookies
       class Identity
         def encode(str); str; end
         def decode(str); str; end
-      end
-
-      # Reverse string encoding. (trollface)
-      class Reverse
-        def encode(str); str.reverse; end
-        def decode(str); str.reverse; end
       end
 
       attr_reader :coder
@@ -127,7 +135,9 @@ module Rack
           session_data = request.cookies[@key]
 
           if @secrets.size > 0 && session_data
-            session_data, digest = session_data.split("--")
+            digest, session_data = session_data.reverse.split("--", 2)
+            digest.reverse! if digest
+            session_data.reverse! if session_data
             session_data = nil unless digest_match?(session_data, digest)
           end
 

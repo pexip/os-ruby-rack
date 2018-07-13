@@ -11,6 +11,7 @@ module Rack
   # used when Etag is absent and a directive when it is present. The first
   # defaults to nil, while the second defaults to "max-age=0, private, must-revalidate"
   class ETag
+    ETAG_STRING = 'ETag'.freeze
     DEFAULT_CACHE_CONTROL = "max-age=0, private, must-revalidate".freeze
 
     def initialize(app, no_cache_control = nil, cache_control = DEFAULT_CACHE_CONTROL)
@@ -23,15 +24,19 @@ module Rack
       status, headers, body = @app.call(env)
 
       if etag_status?(status) && etag_body?(body) && !skip_caching?(headers)
-        digest, body = digest_body(body)
-        headers['ETag'] = %("#{digest}") if digest
+        original_body = body
+        digest, new_body = digest_body(body)
+        body = Rack::BodyProxy.new(new_body) do
+          original_body.close if original_body.respond_to?(:close)
+        end
+        headers[ETAG_STRING] = %(W/"#{digest}") if digest
       end
 
-      unless headers['Cache-Control']
+      unless headers[CACHE_CONTROL]
         if digest
-          headers['Cache-Control'] = @cache_control if @cache_control
+          headers[CACHE_CONTROL] = @cache_control if @cache_control
         else
-          headers['Cache-Control'] = @no_cache_control if @no_cache_control
+          headers[CACHE_CONTROL] = @no_cache_control if @no_cache_control
         end
       end
 
@@ -49,16 +54,20 @@ module Rack
       end
 
       def skip_caching?(headers)
-        (headers['Cache-Control'] && headers['Cache-Control'].include?('no-cache')) ||
-          headers.key?('ETag') || headers.key?('Last-Modified')
+        (headers[CACHE_CONTROL] && headers[CACHE_CONTROL].include?('no-cache')) ||
+          headers.key?(ETAG_STRING) || headers.key?('Last-Modified')
       end
 
       def digest_body(body)
         parts = []
-        body.each { |part| parts << part }
-        string_body = parts.join
-        digest = Digest::MD5.hexdigest(string_body) unless string_body.empty?
-        [digest, parts]
+        digest = nil
+
+        body.each do |part|
+          parts << part
+          (digest ||= Digest::MD5.new) << part unless part.empty?
+        end
+
+        [digest && digest.hexdigest, parts]
       end
   end
 end

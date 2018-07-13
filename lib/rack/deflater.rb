@@ -1,5 +1,4 @@
 require "zlib"
-require "stringio"
 require "time"  # for Time.httpdate
 require 'rack/utils'
 
@@ -17,19 +16,26 @@ module Rack
   # directive of 'no-transform' is present, or when the response status
   # code is one that doesn't allow an entity body.
   class Deflater
-    def initialize(app)
+    ##
+    # Creates Rack::Deflater middleware.
+    #
+    # [app] rack app instance
+    # [options] hash of deflater options, i.e.
+    #           'if' - a lambda enabling / disabling deflation based on returned boolean value
+    #                  e.g use Rack::Deflater, :if => lambda { |env, status, headers, body| body.length > 512 }
+    #           'include' - a list of content types that should be compressed
+    def initialize(app, options = {})
       @app = app
+
+      @condition = options[:if]
+      @compressible_types = options[:include]
     end
 
     def call(env)
       status, headers, body = @app.call(env)
       headers = Utils::HeaderHash.new(headers)
 
-      # Skip compressing empty entity body responses and responses with
-      # no-transform set.
-      if Utils::STATUS_WITH_NO_ENTITY_BODY.include?(status) ||
-          headers['Cache-Control'].to_s =~ /\bno-transform\b/ ||
-         (headers['Content-Encoding'] && headers['Content-Encoding'] !~ /\bidentity\b/)
+      unless should_deflate?(env, status, headers, body)
         return [status, headers, body]
       end
 
@@ -47,20 +53,20 @@ module Rack
       case encoding
       when "gzip"
         headers['Content-Encoding'] = "gzip"
-        headers.delete('Content-Length')
+        headers.delete(CONTENT_LENGTH)
         mtime = headers.key?("Last-Modified") ?
           Time.httpdate(headers["Last-Modified"]) : Time.now
         [status, headers, GzipStream.new(body, mtime)]
       when "deflate"
         headers['Content-Encoding'] = "deflate"
-        headers.delete('Content-Length')
+        headers.delete(CONTENT_LENGTH)
         [status, headers, DeflateStream.new(body)]
       when "identity"
         [status, headers, body]
       when nil
-        body.close if body.respond_to?(:close)
         message = "An acceptable encoding for the requested resource #{request.fullpath} could not be found."
-        [406, {"Content-Type" => "text/plain", "Content-Length" => message.length.to_s}, [message]]
+        bp = Rack::BodyProxy.new([message]) { body.close if body.respond_to?(:close) }
+        [406, {CONTENT_TYPE => "text/plain", CONTENT_LENGTH => message.length.to_s}, bp]
       end
     end
 
@@ -68,6 +74,7 @@ module Rack
       def initialize(body, mtime)
         @body = body
         @mtime = mtime
+        @closed = false
       end
 
       def each(&block)
@@ -79,13 +86,18 @@ module Rack
           gzip.flush
         }
       ensure
-        @body.close if @body.respond_to?(:close)
         gzip.close
         @writer = nil
       end
 
       def write(data)
         @writer.call(data)
+      end
+
+      def close
+        return if @closed
+        @closed = true
+        @body.close if @body.respond_to?(:close)
       end
     end
 
@@ -100,17 +112,43 @@ module Rack
 
       def initialize(body)
         @body = body
+        @closed = false
       end
 
       def each
-        deflater = ::Zlib::Deflate.new(*DEFLATE_ARGS)
-        @body.each { |part| yield deflater.deflate(part, Zlib::SYNC_FLUSH) }
-        yield deflater.finish
+        deflator = ::Zlib::Deflate.new(*DEFLATE_ARGS)
+        @body.each { |part| yield deflator.deflate(part, Zlib::SYNC_FLUSH) }
+        yield deflator.finish
         nil
       ensure
-        @body.close if @body.respond_to?(:close)
-        deflater.close
+        deflator.close
       end
+
+      def close
+        return if @closed
+        @closed = true
+        @body.close if @body.respond_to?(:close)
+      end
+    end
+
+    private
+
+    def should_deflate?(env, status, headers, body)
+      # Skip compressing empty entity body responses and responses with
+      # no-transform set.
+      if Utils::STATUS_WITH_NO_ENTITY_BODY.include?(status) ||
+          headers[CACHE_CONTROL].to_s =~ /\bno-transform\b/ ||
+         (headers['Content-Encoding'] && headers['Content-Encoding'] !~ /\bidentity\b/)
+        return false
+      end
+
+      # Skip if @compressible_types are given and does not include request's content type
+      return false if @compressible_types && !(headers.has_key?('Content-Type') && @compressible_types.include?(headers['Content-Type'][/[^;]*/]))
+
+      # Skip if @condition lambda is given and evaluates to false
+      return false if @condition && !@condition.call(env, status, headers, body)
+
+      true
     end
   end
 end

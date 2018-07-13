@@ -289,7 +289,7 @@ module Rack
           value && !value.empty?
         end
 
-        # Session should be commited if it was loaded, any of specific options like :renew, :drop
+        # Session should be committed if it was loaded, any of specific options like :renew, :drop
         # or :expire_after was given and the security permissions match. Skips if skip is given.
 
         def commit_session?(env, session, options)
@@ -310,7 +310,7 @@ module Rack
         end
 
         def force_options?(options)
-          options.values_at(:renew, :drop, :defer, :expire_after).any?
+          options.values_at(:max_age, :renew, :drop, :defer, :expire_after).any?
         end
 
         def security_matches?(env, options)
@@ -342,11 +342,12 @@ module Rack
           if not data = set_session(env, session_id, session_data, options)
             env["rack.errors"].puts("Warning! #{self.class.name} failed to save session. Content dropped.")
           elsif options[:defer] and not options[:renew]
-            env["rack.errors"].puts("Defering cookie for #{session_id}") if $VERBOSE
+            env["rack.errors"].puts("Deferring cookie for #{session_id}") if $VERBOSE
           else
             cookie = Hash.new
             cookie[:value] = data
             cookie[:expires] = Time.now + options[:expire_after] if options[:expire_after]
+            cookie[:expires] = Time.now + options[:max_age] if options[:max_age]
             set_cookie(env, headers, cookie.merge!(options))
           end
 
@@ -369,7 +370,7 @@ module Rack
           SessionHash
         end
 
-        # All thread safety and session retrival proceedures should occur here.
+        # All thread safety and session retrieval procedures should occur here.
         # Should return [session_id, session].
         # If nil is provided as the session id, generation of a new valid id
         # should occur within.
@@ -378,7 +379,7 @@ module Rack
           raise '#get_session not implemented.'
         end
 
-        # All thread safety and session storage proceedures should occur here.
+        # All thread safety and session storage procedures should occur here.
         # Must return the session id if the session was saved successfully, or
         # false if the session could not be saved.
 
@@ -386,7 +387,7 @@ module Rack
           raise '#set_session not implemented.'
         end
 
-        # All thread safety and session destroy proceedures should occur here.
+        # All thread safety and session destroy procedures should occur here.
         # Should return a new session id or nil if options[:drop]
 
         def destroy_session(env, sid, options)

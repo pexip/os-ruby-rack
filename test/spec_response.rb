@@ -85,6 +85,18 @@ describe Rack::Response do
     response["Set-Cookie"].should.equal "foo=bar; HttpOnly"
   end
 
+  it "can set http only cookies with :http_only" do
+    response = Rack::Response.new
+    response.set_cookie "foo", {:value => "bar", :http_only => true}
+    response["Set-Cookie"].should.equal "foo=bar; HttpOnly"
+  end
+
+  it "can set prefers :httponly for http only cookie setting when :httponly and :http_only provided" do
+    response = Rack::Response.new
+    response.set_cookie "foo", {:value => "bar", :httponly => false, :http_only => true}
+    response["Set-Cookie"].should.equal "foo=bar"
+  end
+
   it "can delete cookies" do
     response = Rack::Response.new
     response.set_cookie "foo", "bar"
@@ -211,10 +223,23 @@ describe Rack::Response do
     res.should.be.successful
     res.should.be.ok
 
+    res.status = 201
+    res.should.be.successful
+    res.should.be.created
+
+    res.status = 202
+    res.should.be.successful
+    res.should.be.accepted
+
     res.status = 400
     res.should.not.be.successful
     res.should.be.client_error
     res.should.be.bad_request
+
+    res.status = 401
+    res.should.not.be.successful
+    res.should.be.client_error
+    res.should.be.unauthorized
 
     res.status = 404
     res.should.not.be.successful
@@ -225,6 +250,11 @@ describe Rack::Response do
     res.should.not.be.successful
     res.should.be.client_error
     res.should.be.method_not_allowed
+
+    res.status = 418
+    res.should.not.be.successful
+    res.should.be.client_error
+    res.should.be.i_m_a_teapot
 
     res.status = 422
     res.should.not.be.successful

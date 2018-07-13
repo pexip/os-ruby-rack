@@ -33,7 +33,7 @@ describe Rack::Handler::WEBrick do
 
   should "have rack headers" do
     GET("/test")
-    response["rack.version"].should.equal [1,2]
+    response["rack.version"].should.equal [1,3]
     response["rack.multithread"].should.be.true
     response["rack.multiprocess"].should.be.false
     response["rack.run_once"].should.be.false
@@ -136,6 +136,47 @@ describe Rack::Handler::WEBrick do
       res = http.get("/headers")
       res.code.to_i.should.equal 401
       res["www-authenticate"].should.equal "Bar realm=X, Baz realm=Y"
+    }
+  end
+
+  should "support Rack partial hijack" do
+    io_lambda = lambda{ |io|
+      5.times do
+        io.write "David\r\n"
+      end
+      io.close
+    }
+
+    @server.mount "/partial", Rack::Handler::WEBrick,
+    Rack::Lint.new(lambda{ |req|
+      [
+        200,
+        {"rack.hijack" => io_lambda},
+        [""]
+      ]
+    })
+
+    Net::HTTP.start(@host, @port){ |http|
+      res = http.get("/partial")
+      res.body.should.equal "David\r\nDavid\r\nDavid\r\nDavid\r\nDavid\r\n"
+    }
+  end
+
+  should "produce correct HTTP semantics with and without app chunking" do
+    @server.mount "/chunked", Rack::Handler::WEBrick,
+    Rack::Lint.new(lambda{ |req|
+      [
+        200,
+        {"Transfer-Encoding" => "chunked"},
+        ["7\r\nchunked\r\n0\r\n\r\n"]
+      ]
+    })
+
+    Net::HTTP.start(@host, @port){ |http|
+      res = http.get("/chunked")
+      res["Transfer-Encoding"].should.equal "chunked"
+      res["Content-Length"].should.equal nil
+      res.body.should.equal "chunked"
     }
   end
 

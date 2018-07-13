@@ -1,7 +1,10 @@
 require 'optparse'
 
+
 module Rack
+
   class Server
+
     class Options
       def parse!(args)
         options = {}
@@ -27,6 +30,9 @@ module Rack
           opts.on("-w", "--warn", "turn warnings on for your script") {
             options[:warn] = true
           }
+          opts.on("-q", "--quiet", "turn off logging") {
+            options[:quiet] = true
+          }
 
           opts.on("-I", "--include PATH",
                   "specify $LOAD_PATH (may be used more than once)") { |path|
@@ -44,7 +50,7 @@ module Rack
             options[:server] = s
           }
 
-          opts.on("-o", "--host HOST", "listen on HOST (default: 0.0.0.0)") { |host|
+          opts.on("-o", "--host HOST", "listen on HOST (default: localhost)") { |host|
             options[:Host] = host
           }
 
@@ -66,7 +72,7 @@ module Rack
             options[:daemonize] = d ? true : false
           }
 
-          opts.on("-P", "--pid FILE", "file to store PID (default: rack.pid)") { |f|
+          opts.on("-P", "--pid FILE", "file to store PID") { |f|
             options[:pid] = ::File.expand_path(f)
           }
 
@@ -166,7 +172,7 @@ module Rack
     # * :Port
     #     the port to bind to (used by supporting Rack::Handler)
     # * :AccessLog
-    #     webrick acess log options (or supporting Rack::Handler)
+    #     webrick access log options (or supporting Rack::Handler)
     # * :debug
     #     turn on debug output ($DEBUG = true)
     # * :warn
@@ -185,11 +191,14 @@ module Rack
     end
 
     def default_options
+      environment  = ENV['RACK_ENV'] || 'development'
+      default_host = environment == 'development' ? 'localhost' : '0.0.0.0'
+
       {
-        :environment => ENV['RACK_ENV'] || "development",
+        :environment => environment,
         :pid         => nil,
         :Port        => 9292,
-        :Host        => "0.0.0.0",
+        :Host        => default_host,
         :AccessLog   => [],
         :config      => "config.ru"
       }
@@ -199,22 +208,35 @@ module Rack
       @app ||= options[:builder] ? build_app_from_string : build_app_and_options_from_config
     end
 
-    def self.logging_middleware
-      lambda { |server|
-        server.server.name =~ /CGI/ ? nil : [Rack::CommonLogger, $stderr]
-      }
-    end
+    class << self
+      def logging_middleware
+        lambda { |server|
+          server.server.name =~ /CGI/ || server.options[:quiet] ? nil : [Rack::CommonLogger, $stderr]
+        }
+      end
 
-    def self.middleware
-      @middleware ||= begin
+      def default_middleware_by_environment
         m = Hash.new {|h,k| h[k] = []}
-        m["deployment"].concat [
+        m["deployment"] = [
           [Rack::ContentLength],
           [Rack::Chunked],
-          logging_middleware
+          logging_middleware,
+          [Rack::TempfileReaper]
         ]
-        m["development"].concat m["deployment"] + [[Rack::ShowExceptions], [Rack::Lint]]
+        m["development"] = [
+          [Rack::ContentLength],
+          [Rack::Chunked],
+          logging_middleware,
+          [Rack::ShowExceptions],
+          [Rack::Lint],
+          [Rack::TempfileReaper]
+        ]
+
         m
+      end
+
+      def middleware
+        default_middleware_by_environment
       end
     end
 
@@ -288,7 +310,7 @@ module Rack
 
         # Don't evaluate CGI ISINDEX parameters.
         # http://www.meb.uni-bonn.de/docs/cgi/cl.html
-        args.clear if ENV.include?("REQUEST_METHOD")
+        args.clear if ENV.include?(REQUEST_METHOD)
 
         options.merge! opt_parser.parse!(args)
         options[:config] = ::File.expand_path(options[:config])
@@ -350,6 +372,8 @@ module Rack
         return :exited unless ::File.exist?(options[:pid])
 
         pid = ::File.read(options[:pid]).to_i
+        return :dead if pid == 0
+
         Process.kill(0, pid)
         :running
       rescue Errno::ESRCH
@@ -359,4 +383,5 @@ module Rack
       end
 
   end
+
 end

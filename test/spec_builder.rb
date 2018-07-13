@@ -130,6 +130,17 @@ describe Rack::Builder do
     Rack::MockRequest.new(app).get("/foo").should.be.server_error
   end
 
+  it "yields the generated app to a block for warmup" do
+    warmed_up_app = nil
+
+    app = Rack::Builder.new do
+      warmup { |a| warmed_up_app = a }
+      run lambda { |env| [200, {}, []] }
+    end.to_app
+
+    warmed_up_app.should.equal app
+  end
+
   should "initialize apps once" do
     app = builder do
       class AppClass
@@ -180,8 +191,7 @@ describe Rack::Builder do
     end
 
     it "removes __END__ before evaluating app" do
-      app, options = Rack::Builder.parse_file config_file('end.ru')
-      options = nil # ignored, prevents warning
+      app, _ = Rack::Builder.parse_file config_file('end.ru')
       Rack::MockRequest.new(app).get("/").body.to_s.should.equal 'OK'
     end
 
@@ -199,8 +209,7 @@ describe Rack::Builder do
     end
 
     it "sets __LINE__ correctly" do
-      app, options = Rack::Builder.parse_file config_file('line.ru')
-      options = nil # ignored, prevents warning
+      app, _ = Rack::Builder.parse_file config_file('line.ru')
       Rack::MockRequest.new(app).get("/").body.to_s.should.equal '1'
     end
   end

@@ -2,6 +2,7 @@ require 'stringio'
 require 'cgi'
 require 'rack/request'
 require 'rack/mock'
+require 'securerandom'
 
 describe Rack::Request do
   should "wrap the rack variables" do
@@ -93,6 +94,14 @@ describe Rack::Request do
     req = Rack::Request.new \
       Rack::MockRequest.env_for("/", "HTTP_HOST" => "localhost:81", "HTTP_X_FORWARDED_HOST" => "example.org", "SERVER_PORT" => "9393")
     req.port.should.equal 80
+
+    req = Rack::Request.new \
+      Rack::MockRequest.env_for("/", "HTTP_HOST" => "localhost", "HTTP_X_FORWARDED_PROTO" => "https", "SERVER_PORT" => "80")
+    req.port.should.equal 443
+
+    req = Rack::Request.new \
+      Rack::MockRequest.env_for("/", "HTTP_HOST" => "localhost", "HTTP_X_FORWARDED_PROTO" => "https,https", "SERVER_PORT" => "80")
+    req.port.should.equal 443
   end
 
   should "figure out the correct host with port" do
@@ -125,6 +134,25 @@ describe Rack::Request do
     req.params.should.equal "foo" => "bar", "quux" => "bla"
   end
 
+  should "not truncate query strings containing semi-colons #543 only in POST" do
+    mr = Rack::MockRequest.env_for("/",
+      "REQUEST_METHOD" => 'POST',
+      :input => "foo=bar&quux=b;la")
+    req = Rack::Request.new mr
+    req.query_string.should.equal ""
+    req.GET.should.be.empty
+    req.POST.should.equal "foo" => "bar", "quux" => "b;la"
+    req.params.should.equal req.GET.merge(req.POST)
+  end
+
+  should "use semi-colons as separators for query strings in GET" do
+    req = Rack::Request.new(Rack::MockRequest.env_for("/?foo=bar&quux=b;la;wun=duh"))
+    req.query_string.should.equal "foo=bar&quux=b;la;wun=duh"
+    req.GET.should.equal "foo" => "bar", "quux" => "b", "la" => nil, "wun" => "duh"
+    req.POST.should.be.empty
+    req.params.should.equal "foo" => "bar", "quux" => "b", "la" => nil, "wun" => "duh"
+  end
+
   should "limit the keys from the GET query string" do
     env = Rack::MockRequest.env_for("/?foo=bar")
 
@@ -138,7 +166,7 @@ describe Rack::Request do
   end
 
   should "limit the key size per nested params hash" do
-    nested_query = Rack::MockRequest.env_for("/?foo[bar][baz][qux]=1")
+    nested_query = Rack::MockRequest.env_for("/?foo%5Bbar%5D%5Bbaz%5D%5Bqux%5D=1")
     plain_query  = Rack::MockRequest.env_for("/?foo_bar__baz__qux_=1")
 
     old, Rack::Utils.key_space_limit = Rack::Utils.key_space_limit, 3
@@ -162,6 +190,18 @@ describe Rack::Request do
     req.GET.should.equal "foo" => "quux"
     req.POST.should.equal "foo" => "bar", "quux" => "bla"
     req.params.should.equal req.GET.merge(req.POST)
+  end
+
+  should "raise if input params has invalid %-encoding" do
+    mr = Rack::MockRequest.env_for("/?foo=quux",
+      "REQUEST_METHOD" => 'POST',
+      :input => "a%=1"
+    )
+    req = Rack::Request.new mr
+
+    lambda { req.POST }.
+      should.raise(Rack::Utils::InvalidParameterError).
+      message.should.equal "invalid %-encoding (a%)"
   end
 
   should "raise if rack.input is missing" do
@@ -598,7 +638,7 @@ describe Rack::Request do
   should "handle multiple media type parameters" do
     req = Rack::Request.new \
       Rack::MockRequest.env_for("/",
-        "CONTENT_TYPE" => 'text/plain; foo=BAR,baz=bizzle dizzle;BLING=bam')
+        "CONTENT_TYPE" => 'text/plain; foo=BAR,baz=bizzle dizzle;BLING=bam;blong="boo";zump="zoo\"o";weird=lol"')
       req.should.not.be.form_data
       req.media_type_params.should.include 'foo'
       req.media_type_params['foo'].should.equal 'BAR'
@@ -607,6 +647,9 @@ describe Rack::Request do
       req.media_type_params.should.not.include 'BLING'
       req.media_type_params.should.include 'bling'
       req.media_type_params['bling'].should.equal 'bam'
+      req.media_type_params['blong'].should.equal 'boo'
+      req.media_type_params['zump'].should.equal 'zoo\"o'
+      req.media_type_params['weird'].should.equal 'lol"'
   end
 
   should "parse with junk before boundry" do
@@ -713,6 +756,22 @@ EOF
     f[:tempfile].size.should.equal 76
   end
 
+  should "MultipartPartLimitError when request has too many multipart parts if limit set" do
+    begin
+      data = 10000.times.map { "--AaB03x\r\nContent-Type: text/plain\r\nContent-Disposition: attachment; name=#{SecureRandom.hex(10)}; filename=#{SecureRandom.hex(10)}\r\n\r\ncontents\r\n" }.join("\r\n")
+      data += "--AaB03x--\r"
+
+      options = {
+        "CONTENT_TYPE" => "multipart/form-data; boundary=AaB03x",
+        "CONTENT_LENGTH" => data.length.to_s,
+        :input => StringIO.new(data)
+      }
+
+      request = Rack::Request.new Rack::MockRequest.env_for("/", options)
+      lambda { request.POST }.should.raise(Rack::Multipart::MultipartPartLimitError)
+    end
+  end
+
   should "parse big multipart form data" do
     input = <<EOF
 --AaB03x\r
@@ -733,6 +792,31 @@ EOF
     req.POST["huge"][:tempfile].size.should.equal 32768
     req.POST["mean"][:tempfile].size.should.equal 10
     req.POST["mean"][:tempfile].read.should.equal "--AaB03xha"
+  end
+
+  should "record tempfiles from multipart form data in env[rack.tempfiles]" do
+    input = <<EOF
+--AaB03x\r
+content-disposition: form-data; name="fileupload"; filename="foo.jpg"\r
+Content-Type: image/jpeg\r
+Content-Transfer-Encoding: base64\r
+\r
+/9j/4AAQSkZJRgABAQAAAQABAAD//gA+Q1JFQVRPUjogZ2QtanBlZyB2MS4wICh1c2luZyBJSkcg\r
+--AaB03x\r
+content-disposition: form-data; name="fileupload"; filename="bar.jpg"\r
+Content-Type: image/jpeg\r
+Content-Transfer-Encoding: base64\r
+\r
+/9j/4AAQSkZJRgABAQAAAQABAAD//gA+Q1JFQVRPUjogZ2QtanBlZyB2MS4wICh1c2luZyBJSkcg\r
+--AaB03x--\r
+EOF
+    env = Rack::MockRequest.env_for("/",
+                          "CONTENT_TYPE" => "multipart/form-data, boundary=AaB03x",
+                          "CONTENT_LENGTH" => input.size,
+                          :input => input)
+    req = Rack::Request.new(env)
+    req.params
+    env['rack.tempfiles'].size.should.equal(2)
   end
 
   should "detect invalid multipart form data" do
@@ -771,6 +855,20 @@ EOF
                       "CONTENT_LENGTH" => input.size,
                       :input => input)
 
+    lambda { req.POST }.should.raise(EOFError)
+  end
+
+  should "consistently raise EOFError on bad multipart form data" do
+    input = <<EOF
+--AaB03x\r
+content-disposition: form-data; name="huge"; filename="huge"\r
+EOF
+    req = Rack::Request.new Rack::MockRequest.env_for("/",
+                      "CONTENT_TYPE" => "multipart/form-data, boundary=AaB03x",
+                      "CONTENT_LENGTH" => input.size,
+                      :input => input)
+
+    lambda { req.POST }.should.raise(EOFError)
     lambda { req.POST }.should.raise(EOFError)
   end
 
@@ -859,6 +957,21 @@ EOF
     lambda{ req.POST }.should.not.raise("input re-processed!")
   end
 
+  should "use form_hash when form_input is a Tempfile" do
+    input = "{foo: 'bar'}"
+
+    rack_input = Tempfile.new("rackspec")
+    rack_input.write(input)
+    rack_input.rewind
+
+    req = Rack::Request.new Rack::MockRequest.env_for("/",
+                      "rack.request.form_hash" => {'foo' => 'bar'},
+                      "rack.request.form_input" => rack_input,
+                      :input => rack_input)
+
+    req.POST.should.equal(req.env['rack.request.form_hash'])
+  end
+
   should "conform to the Rack spec" do
     app = lambda { |env|
       content = Rack::Request.new(env).POST["file"].inspect
@@ -902,6 +1015,23 @@ EOF
 
     parser.call("gzip ; q=0.9").should.equal([["gzip", 0.9]])
     parser.call("gzip ; deflate").should.equal([["gzip", 1.0]])
+  end
+
+  should "parse Accept-Language correctly" do
+    parser = lambda do |x|
+      Rack::Request.new(Rack::MockRequest.env_for("", "HTTP_ACCEPT_LANGUAGE" => x)).accept_language
+    end
+
+    parser.call(nil).should.equal([])
+
+    parser.call("fr, en").should.equal([["fr", 1.0], ["en", 1.0]])
+    parser.call("").should.equal([])
+    parser.call("*").should.equal([["*", 1.0]])
+    parser.call("fr;q=0.5, en;q=1.0").should.equal([["fr", 0.5], ["en", 1.0]])
+    parser.call("fr;q=1.0, en; q=0.5, *;q=0").should.equal([["fr", 1.0], ["en", 0.5], ["*", 0] ])
+
+    parser.call("fr ; q=0.9").should.equal([["fr", 0.9]])
+    parser.call("fr").should.equal([["fr", 1.0]])
   end
 
   ip_app = lambda { |env|
@@ -986,12 +1116,6 @@ EOF
       'HTTP_CLIENT_IP' => '1.1.1.1'
     res.body.should.equal '1.1.1.1'
 
-    # Spoofing attempt
-    res = mock.get '/',
-      'HTTP_X_FORWARDED_FOR' => '1.1.1.1',
-      'HTTP_CLIENT_IP' => '2.2.2.2'
-    res.body.should.equal '1.1.1.1'
-
     res = mock.get '/', 'HTTP_X_FORWARDED_FOR' => '8.8.8.8, 9.9.9.9'
     res.body.should.equal '9.9.9.9'
 
@@ -1008,6 +1132,24 @@ EOF
       'REMOTE_ADDR' => 'unix:/tmp/foo',
       'HTTP_X_FORWARDED_FOR' => '3.4.5.6'
     res.body.should.equal '3.4.5.6'
+  end
+
+  should "not allow IP spoofing via Client-IP and X-Forwarded-For headers" do
+    mock = Rack::MockRequest.new(Rack::Lint.new(ip_app))
+
+    # IP Spoofing attempt:
+    # Client sends          X-Forwarded-For: 6.6.6.6
+    #                       Client-IP: 6.6.6.6
+    # Load balancer adds    X-Forwarded-For: 2.2.2.3, 192.168.0.7
+    # App receives:         X-Forwarded-For: 6.6.6.6
+    #                       X-Forwarded-For: 2.2.2.3, 192.168.0.7
+    #                       Client-IP: 6.6.6.6
+    # Rack env:             HTTP_X_FORWARDED_FOR: '6.6.6.6, 2.2.2.3, 192.168.0.7'
+    #                       HTTP_CLIENT_IP: '6.6.6.6'
+    res = mock.get '/',
+      'HTTP_X_FORWARDED_FOR' => '6.6.6.6, 2.2.2.3, 192.168.0.7',
+      'HTTP_CLIENT_IP' => '6.6.6.6'
+    res.body.should.equal '2.2.2.3'
   end
 
   should "regard local addresses as proxies" do
@@ -1062,6 +1204,13 @@ EOF
     req2 = Rack::Request.new(env)
     req2.GET.should.equal "foo" => "bar"
     req2.params.should.equal "foo" => "bar"
+  end
+
+  should "raise TypeError every time if request parameters are broken" do
+    broken_query = Rack::MockRequest.env_for("/?foo%5B%5D=0&foo%5Bbar%5D=1")
+    req = Rack::Request.new(broken_query)
+    lambda{req.GET}.should.raise(TypeError)
+    lambda{req.params}.should.raise(TypeError)
   end
 
   (0x20...0x7E).collect { |a|
