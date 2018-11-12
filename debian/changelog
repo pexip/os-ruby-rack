@@ -1,3 +1,9 @@
+ruby-rack (1.6.4-4pexip2) pexip; urgency=medium
+
+  * Backport fix for CVE-2018-16471
+
+ -- John-Mark Bell <jmb@pexip.com>  Mon, 12 Nov 2018 23:04:12 +0000
+
 ruby-rack (1.6.4-4pexip1) pexip; urgency=medium
 
   * Migrate to Stretch
