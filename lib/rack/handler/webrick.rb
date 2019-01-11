@@ -3,7 +3,7 @@ require 'stringio'
 require 'rack/content_length'
 
 # This monkey patch allows for applications to perform their own chunking
-# through WEBrick::HTTPResponse iff rack is set to true.
+# through WEBrick::HTTPResponse if rack is set to true.
 class WEBrick::HTTPResponse
   attr_accessor :rack
 
@@ -24,7 +24,7 @@ module Rack
     class WEBrick < ::WEBrick::HTTPServlet::AbstractServlet
       def self.run(app, options={})
         environment  = ENV['RACK_ENV'] || 'development'
-        default_host = environment == 'development' ? 'localhost' : '0.0.0.0'
+        default_host = environment == 'development' ? 'localhost' : nil
 
         options[:BindAddress] = options.delete(:Host) || default_host
         options[:Port] ||= 8080
@@ -60,38 +60,37 @@ module Rack
         env.delete_if { |k, v| v.nil? }
 
         rack_input = StringIO.new(req.body.to_s)
-        rack_input.set_encoding(Encoding::BINARY) if rack_input.respond_to?(:set_encoding)
+        rack_input.set_encoding(Encoding::BINARY)
 
-        env.update({"rack.version" => Rack::VERSION,
-                     "rack.input" => rack_input,
-                     "rack.errors" => $stderr,
+        env.update(
+          RACK_VERSION      => Rack::VERSION,
+          RACK_INPUT        => rack_input,
+          RACK_ERRORS       => $stderr,
+          RACK_MULTITHREAD  => true,
+          RACK_MULTIPROCESS => false,
+          RACK_RUNONCE      => false,
+          RACK_URL_SCHEME   => ["yes", "on", "1"].include?(env[HTTPS]) ? "https" : "http",
+          RACK_IS_HIJACK    => true,
+          RACK_HIJACK       => lambda { raise NotImplementedError, "only partial hijack is supported."},
+          RACK_HIJACK_IO    => nil
+        )
 
-                     "rack.multithread" => true,
-                     "rack.multiprocess" => false,
-                     "rack.run_once" => false,
-
-                     "rack.url_scheme" => ["yes", "on", "1"].include?(env["HTTPS"]) ? "https" : "http",
-
-                     "rack.hijack?" => true,
-                     "rack.hijack" => lambda { raise NotImplementedError, "only partial hijack is supported."},
-                     "rack.hijack_io" => nil,
-                   })
-
-        env["HTTP_VERSION"] ||= env["SERVER_PROTOCOL"]
+        env[HTTP_VERSION] ||= env[SERVER_PROTOCOL]
         env[QUERY_STRING] ||= ""
         unless env[PATH_INFO] == ""
-          path, n = req.request_uri.path, env["SCRIPT_NAME"].length
+          path, n = req.request_uri.path, env[SCRIPT_NAME].length
           env[PATH_INFO] = path[n, path.length-n]
         end
-        env["REQUEST_PATH"] ||= [env["SCRIPT_NAME"], env[PATH_INFO]].join
+        env[REQUEST_PATH] ||= [env[SCRIPT_NAME], env[PATH_INFO]].join
 
         status, headers, body = @app.call(env)
         begin
           res.status = status.to_i
+          io_lambda = nil
           headers.each { |k, vs|
-            next if k.downcase == "rack.hijack"
-
-            if k.downcase == "set-cookie"
+            if k == RACK_HIJACK
+              io_lambda = vs
+            elsif k.downcase == "set-cookie"
               res.cookies.concat vs.split("\n")
             else
               # Since WEBrick won't accept repeated headers,
@@ -100,7 +99,6 @@ module Rack
             end
           }
 
-          io_lambda = headers["rack.hijack"]
           if io_lambda
             rd, wr = IO.pipe
             res.body = rd

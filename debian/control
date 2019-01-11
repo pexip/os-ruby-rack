@@ -2,29 +2,33 @@ Source: ruby-rack
 Section: ruby
 Priority: optional
 Maintainer: Debian Ruby Extras Maintainers <pkg-ruby-extras-maintainers@lists.alioth.debian.org>
-Uploaders: Lucas Nussbaum <lucas@debian.org>,
-           Youhei SASAKI <uwabami@gfd-dennou.org>,
-           Paul van Tilburg <paulvt@debian.org>,
-           Antonio Terceiro <terceiro@debian.org>
-Build-Depends: debhelper (>= 9~),
-               gem2deb,
-               rake,
-               ruby-bacon,
-               ruby-dalli,
-               thin
-Standards-Version: 3.9.8
-Vcs-Git: https://anonscm.debian.org/git/pkg-ruby-extras/ruby-rack.git
-Vcs-Browser: https://anonscm.debian.org/cgit/pkg-ruby-extras/ruby-rack.git
+Uploaders:
+ Chris Lamb <lamby@debian.org>,
+ Lucas Nussbaum <lucas@debian.org>,
+ Youhei SASAKI <uwabami@gfd-dennou.org>,
+ Paul van Tilburg <paulvt@debian.org>,
+Build-Depends:
+ debhelper (>= 11~),
+ gem2deb,
+ rake,
+ ruby-bacon,
+ ruby-concurrent (>= 1.0.3~),
+ ruby-dalli,
+ thin,
+Standards-Version: 4.3.0
+Vcs-Git: https://salsa.debian.org/ruby-team/ruby-rack.git
+Vcs-Browser: https://salsa.debian.org/ruby-team/ruby-rack
 Homepage: https://rack.github.io/
-Testsuite: autopkgtest-pkg-ruby
 XS-Ruby-Versions: all
 
 Package: ruby-rack
 Architecture: all
 XB-Ruby-Versions: ${ruby:Versions}
-Depends: ruby | ruby-interpreter,
-         ${misc:Depends},
-         ${shlibs:Depends}
+Depends:
+ ruby | ruby-interpreter,
+ ${misc:Depends},
+ ${shlibs:Depends},
+Breaks: ruby-sinatra (<< 2)
 Description: modular Ruby webserver interface
  Rack provides a minimal, modular and adaptable interface for developing
  web applications in Ruby.  By wrapping HTTP requests and responses in

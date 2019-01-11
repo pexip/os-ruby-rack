@@ -43,20 +43,16 @@ module Rack
       raise LoadError, "Couldn't find handler for: #{server_names.join(', ')}."
     end
 
-    def self.default(options = {})
+    def self.default
       # Guess.
       if ENV.include?("PHP_FCGI_CHILDREN")
-        # We already speak FastCGI
-        options.delete :File
-        options.delete :Port
-
         Rack::Handler::FastCGI
       elsif ENV.include?(REQUEST_METHOD)
         Rack::Handler::CGI
       elsif ENV.include?("RACK_HANDLER")
         self.get(ENV["RACK_HANDLER"])
       else
-        pick ['thin', 'puma', 'webrick']
+        pick ['puma', 'thin', 'webrick']
       end
     end
 
@@ -88,9 +84,6 @@ module Rack
 
     autoload :CGI, "rack/handler/cgi"
     autoload :FastCGI, "rack/handler/fastcgi"
-    autoload :Mongrel, "rack/handler/mongrel"
-    autoload :EventedMongrel, "rack/handler/evented_mongrel"
-    autoload :SwiftipliedMongrel, "rack/handler/swiftiplied_mongrel"
     autoload :WEBrick, "rack/handler/webrick"
     autoload :LSWS, "rack/handler/lsws"
     autoload :SCGI, "rack/handler/scgi"
@@ -98,9 +91,6 @@ module Rack
 
     register 'cgi', 'Rack::Handler::CGI'
     register 'fastcgi', 'Rack::Handler::FastCGI'
-    register 'mongrel', 'Rack::Handler::Mongrel'
-    register 'emongrel', 'Rack::Handler::EventedMongrel'
-    register 'smongrel', 'Rack::Handler::SwiftipliedMongrel'
     register 'webrick', 'Rack::Handler::WEBrick'
     register 'lsws', 'Rack::Handler::LSWS'
     register 'scgi', 'Rack::Handler::SCGI'
