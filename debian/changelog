@@ -1,3 +1,17 @@
+ruby-rack (1.6.4-4+deb9u1pexip1) pexip; urgency=medium
+
+  * New upstream release
+
+ -- Vincent Sanders <vince@pexip.com>  Sun, 10 Mar 2019 14:54:27 +0000
+
+ruby-rack (1.6.4-4+deb9u1) stretch; urgency=medium
+
+  * CVE-2018-16471: Prevent a possible XSS vulnerability where a malicious
+    request could impact the HTTP/HTTPS scheme returned to the underlying
+    application. (Closes: #913005)
+
+ -- Chris Lamb <lamby@debian.org>  Tue, 20 Nov 2018 10:10:14 +0100
+
 ruby-rack (1.6.4-4pexip2) pexip; urgency=medium
 
   * Backport fix for CVE-2018-16471
