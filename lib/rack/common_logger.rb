@@ -48,13 +48,13 @@ module Rack
         now.strftime("%d/%b/%Y:%H:%M:%S %z"),
         env[REQUEST_METHOD],
         env[PATH_INFO],
-        env[QUERY_STRING].empty? ? "" : "?"+env[QUERY_STRING],
-        env["HTTP_VERSION"],
+        env[QUERY_STRING].empty? ? "" : "?#{env[QUERY_STRING]}",
+        env[HTTP_VERSION],
         status.to_s[0..3],
         length,
         now - began_at ]
 
-      logger = @logger || env['rack.errors']
+      logger = @logger || env[RACK_ERRORS]
       # Standard library logger doesn't support write but it supports << which actually
       # calls to write on the log device without formatting
       if logger.respond_to?(:write)

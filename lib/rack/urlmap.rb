@@ -41,17 +41,19 @@ module Rack
     end
 
     def call(env)
-      path = env[PATH_INFO]
-      script_name = env['SCRIPT_NAME']
-      hHost = env['HTTP_HOST']
-      sName = env['SERVER_NAME']
-      sPort = env['SERVER_PORT']
+      path        = env[PATH_INFO]
+      script_name = env[SCRIPT_NAME]
+      http_host   = env[HTTP_HOST]
+      server_name = env[SERVER_NAME]
+      server_port = env[SERVER_PORT]
+
+      is_same_server = casecmp?(http_host, server_name) ||
+                       casecmp?(http_host, "#{server_name}:#{server_port}")
 
       @mapping.each do |host, location, match, app|
-        unless casecmp?(hHost, host) \
-            || casecmp?(sName, host) \
-            || (!host && (casecmp?(hHost, sName) ||
-                          casecmp?(hHost, sName+':'+sPort)))
+        unless casecmp?(http_host, host) \
+            || casecmp?(server_name, host) \
+            || (!host && is_same_server)
           next
         end
 
@@ -60,8 +62,8 @@ module Rack
         rest = m[1]
         next unless !rest || rest.empty? || rest[0] == ?/
 
-        env['SCRIPT_NAME'] = (script_name + location)
-        env['PATH_INFO'] = rest
+        env[SCRIPT_NAME] = (script_name + location)
+        env[PATH_INFO] = rest
 
         return app.call(env)
       end
@@ -69,8 +71,8 @@ module Rack
       [404, {CONTENT_TYPE => "text/plain", "X-Cascade" => "pass"}, ["Not Found: #{path}"]]
 
     ensure
-      env['PATH_INFO'] = path
-      env['SCRIPT_NAME'] = script_name
+      env[PATH_INFO]   = path
+      env[SCRIPT_NAME] = script_name
     end
 
     private
@@ -87,4 +89,3 @@ module Rack
     end
   end
 end
-
