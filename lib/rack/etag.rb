@@ -1,4 +1,5 @@
-require 'digest/md5'
+require 'rack'
+require 'digest/sha2'
 
 module Rack
   # Automatically sets the ETag header on all String bodies.
@@ -11,7 +12,7 @@ module Rack
   # used when Etag is absent and a directive when it is present. The first
   # defaults to nil, while the second defaults to "max-age=0, private, must-revalidate"
   class ETag
-    ETAG_STRING = 'ETag'.freeze
+    ETAG_STRING = Rack::ETAG
     DEFAULT_CACHE_CONTROL = "max-age=0, private, must-revalidate".freeze
 
     def initialize(app, no_cache_control = nil, cache_control = DEFAULT_CACHE_CONTROL)
@@ -64,10 +65,10 @@ module Rack
 
         body.each do |part|
           parts << part
-          (digest ||= Digest::MD5.new) << part unless part.empty?
+          (digest ||= Digest::SHA256.new) << part unless part.empty?
         end
 
-        [digest && digest.hexdigest, parts]
+        [digest && digest.hexdigest.byteslice(0, 32), parts]
       end
   end
 end

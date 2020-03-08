@@ -15,8 +15,8 @@ module Rack
 
     class LintError < RuntimeError; end
     module Assertion
-      def assert(message, &block)
-        unless block.call
+      def assert(message)
+        unless yield
           raise LintError, message
         end
       end
@@ -42,8 +42,8 @@ module Rack
       assert("No env given") { env }
       check_env env
 
-      env['rack.input'] = InputWrapper.new(env['rack.input'])
-      env['rack.errors'] = ErrorWrapper.new(env['rack.errors'])
+      env[RACK_INPUT] = InputWrapper.new(env[RACK_INPUT])
+      env[RACK_ERRORS] = ErrorWrapper.new(env[RACK_ERRORS])
 
       ## and returns an Array of exactly three values:
       status, headers, @body = @app.call(env)
@@ -57,7 +57,7 @@ module Rack
       ## and the *body*.
       check_content_type status, headers
       check_content_length status, headers
-      @head_request = env[REQUEST_METHOD] == "HEAD"
+      @head_request = env[REQUEST_METHOD] == HEAD
       [status, headers, self]
     end
 
@@ -95,7 +95,7 @@ module Rack
       ##                      empty string, if the request URL targets
       ##                      the application root and does not have a
       ##                      trailing slash. This value may be
-      ##                      percent-encoded when I originating from
+      ##                      percent-encoded when originating from
       ##                      a URL.
 
       ## <tt>QUERY_STRING</tt>:: The portion of the request URL that
@@ -177,7 +177,7 @@ module Rack
       ## <tt>rack.session</tt>:: A hash like interface for storing
       ##                         request session data.
       ##                         The store must implement:
-      if session = env['rack.session']
+      if session = env[RACK_SESSION]
         ##                         store(key, value)         (aliased as []=);
         assert("session #{session.inspect} must respond to store and []=") {
           session.respond_to?(:store) && session.respond_to?(:[]=)
@@ -201,7 +201,7 @@ module Rack
 
       ## <tt>rack.logger</tt>:: A common object interface for logging messages.
       ##                        The object must implement:
-      if logger = env['rack.logger']
+      if logger = env[RACK_LOGGER]
         ##                         info(message, &block)
         assert("logger #{logger.inspect} must respond to info") {
           logger.respond_to?(:info)
@@ -229,16 +229,16 @@ module Rack
       end
 
       ## <tt>rack.multipart.buffer_size</tt>:: An Integer hint to the multipart parser as to what chunk size to use for reads and writes.
-      if bufsize = env['rack.multipart.buffer_size']
+      if bufsize = env[RACK_MULTIPART_BUFFER_SIZE]
         assert("rack.multipart.buffer_size must be an Integer > 0 if specified") {
           bufsize.is_a?(Integer) && bufsize > 0
         }
       end
 
       ## <tt>rack.multipart.tempfile_factory</tt>:: An object responding to #call with two arguments, the filename and content_type given for the multipart form field, and returning an IO-like object that responds to #<< and optionally #rewind. This factory will be used to instantiate the tempfile for each multipart form file upload field, rather than the default class of Tempfile.
-      if tempfile_factory = env['rack.multipart.tempfile_factory']
+      if tempfile_factory = env[RACK_MULTIPART_TEMPFILE_FACTORY]
         assert("rack.multipart.tempfile_factory must respond to #call") { tempfile_factory.respond_to?(:call) }
-        env['rack.multipart.tempfile_factory'] = lambda do |filename, content_type|
+        env[RACK_MULTIPART_TEMPFILE_FACTORY] = lambda do |filename, content_type|
           io = tempfile_factory.call(filename, content_type)
           assert("rack.multipart.tempfile_factory return value must respond to #<<") { io.respond_to?(:<<) }
           io
@@ -279,37 +279,37 @@ module Rack
       ## There are the following restrictions:
 
       ## * <tt>rack.version</tt> must be an array of Integers.
-      assert("rack.version must be an Array, was #{env["rack.version"].class}") {
-        env["rack.version"].kind_of? Array
+      assert("rack.version must be an Array, was #{env[RACK_VERSION].class}") {
+        env[RACK_VERSION].kind_of? Array
       }
       ## * <tt>rack.url_scheme</tt> must either be +http+ or +https+.
-      assert("rack.url_scheme unknown: #{env["rack.url_scheme"].inspect}") {
-        %w[http https].include? env["rack.url_scheme"]
+      assert("rack.url_scheme unknown: #{env[RACK_URL_SCHEME].inspect}") {
+        %w[http https].include?(env[RACK_URL_SCHEME])
       }
 
       ## * There must be a valid input stream in <tt>rack.input</tt>.
-      check_input env["rack.input"]
+      check_input env[RACK_INPUT]
       ## * There must be a valid error stream in <tt>rack.errors</tt>.
-      check_error env["rack.errors"]
+      check_error env[RACK_ERRORS]
       ## * There may be a valid hijack stream in <tt>rack.hijack_io</tt>
       check_hijack env
 
       ## * The <tt>REQUEST_METHOD</tt> must be a valid token.
       assert("REQUEST_METHOD unknown: #{env[REQUEST_METHOD]}") {
-        env["REQUEST_METHOD"] =~ /\A[0-9A-Za-z!\#$%&'*+.^_`|~-]+\z/
+        env[REQUEST_METHOD] =~ /\A[0-9A-Za-z!\#$%&'*+.^_`|~-]+\z/
       }
 
       ## * The <tt>SCRIPT_NAME</tt>, if non-empty, must start with <tt>/</tt>
       assert("SCRIPT_NAME must start with /") {
-        !env.include?("SCRIPT_NAME") ||
-        env["SCRIPT_NAME"] == "" ||
-        env["SCRIPT_NAME"] =~ /\A\//
+        !env.include?(SCRIPT_NAME) ||
+        env[SCRIPT_NAME] == "" ||
+        env[SCRIPT_NAME] =~ /\A\//
       }
       ## * The <tt>PATH_INFO</tt>, if non-empty, must start with <tt>/</tt>
       assert("PATH_INFO must start with /") {
-        !env.include?("PATH_INFO") ||
-        env["PATH_INFO"] == "" ||
-        env["PATH_INFO"] =~ /\A\//
+        !env.include?(PATH_INFO) ||
+        env[PATH_INFO] == "" ||
+        env[PATH_INFO] =~ /\A\//
       }
       ## * The <tt>CONTENT_LENGTH</tt>, if given, must consist of digits only.
       assert("Invalid CONTENT_LENGTH: #{env["CONTENT_LENGTH"]}") {
@@ -320,11 +320,11 @@ module Rack
       ##   set.  <tt>PATH_INFO</tt> should be <tt>/</tt> if
       ##   <tt>SCRIPT_NAME</tt> is empty.
       assert("One of SCRIPT_NAME or PATH_INFO must be set (make PATH_INFO '/' if SCRIPT_NAME is empty)") {
-        env["SCRIPT_NAME"] || env["PATH_INFO"]
+        env[SCRIPT_NAME] || env[PATH_INFO]
       }
       ##   <tt>SCRIPT_NAME</tt> never should be <tt>/</tt>, but instead be empty.
       assert("SCRIPT_NAME cannot be '/', make it '' and PATH_INFO '/'") {
-        env["SCRIPT_NAME"] != "/"
+        env[SCRIPT_NAME] != "/"
       }
     end
 
@@ -518,11 +518,11 @@ module Rack
     #
     ## ==== Request (before status)
     def check_hijack(env)
-      if env['rack.hijack?']
+      if env[RACK_IS_HIJACK]
         ## If rack.hijack? is true then rack.hijack must respond to #call.
-        original_hijack = env['rack.hijack']
+        original_hijack = env[RACK_HIJACK]
         assert("rack.hijack must respond to call") { original_hijack.respond_to?(:call) }
-        env['rack.hijack'] = proc do
+        env[RACK_HIJACK] = proc do
           ## rack.hijack must return the io that will also be assigned (or is
           ## already present, in rack.hijack_io.
           io = original_hijack.call
@@ -548,16 +548,16 @@ module Rack
           ## hijack_io to provide additional features to users. The purpose of
           ## rack.hijack is for Rack to "get out of the way", as such, Rack only
           ## provides the minimum of specification and support.
-          env['rack.hijack_io'] = HijackWrapper.new(env['rack.hijack_io'])
+          env[RACK_HIJACK_IO] = HijackWrapper.new(env[RACK_HIJACK_IO])
           io
         end
       else
         ##
         ## If rack.hijack? is false, then rack.hijack should not be set.
-        assert("rack.hijack? is false, but rack.hijack is present") { env['rack.hijack'].nil? }
+        assert("rack.hijack? is false, but rack.hijack is present") { env[RACK_HIJACK].nil? }
         ##
         ## If rack.hijack? is false, then rack.hijack_io should not be set.
-        assert("rack.hijack? is false, but rack.hijack_io is present") { env['rack.hijack_io'].nil? }
+        assert("rack.hijack? is false, but rack.hijack_io is present") { env[RACK_HIJACK_IO].nil? }
       end
     end
 
@@ -587,12 +587,12 @@ module Rack
       ## Servers must ignore the <tt>body</tt> part of the response tuple when
       ## the <tt>rack.hijack</tt> response API is in use.
 
-      if env['rack.hijack?'] && headers['rack.hijack']
+      if env[RACK_IS_HIJACK] && headers[RACK_HIJACK]
         assert('rack.hijack header must respond to #call') {
-          headers['rack.hijack'].respond_to? :call
+          headers[RACK_HIJACK].respond_to? :call
         }
-        original_hijack = headers['rack.hijack']
-        headers['rack.hijack'] = proc do |io|
+        original_hijack = headers[RACK_HIJACK]
+        headers[RACK_HIJACK] = proc do |io|
           original_hijack.call HijackWrapper.new(io)
         end
       else
@@ -600,7 +600,7 @@ module Rack
         ## The special response header <tt>rack.hijack</tt> must only be set
         ## if the request env has <tt>rack.hijack?</tt> <tt>true</tt>.
         assert('rack.hijack header must not be present if server does not support hijacking') {
-          headers['rack.hijack'].nil?
+          headers[RACK_HIJACK].nil?
         }
       end
     end
@@ -659,7 +659,7 @@ module Rack
     def check_content_type(status, headers)
       headers.each { |key, value|
         ## There must not be a <tt>Content-Type</tt>, when the +Status+ is 1xx,
-        ## 204, 205 or 304.
+        ## 204 or 304.
         if key.downcase == "content-type"
           assert("Content-Type header found in #{status} response, not allowed") {
             not Rack::Utils::STATUS_WITH_NO_ENTITY_BODY.include? status.to_i
@@ -674,7 +674,7 @@ module Rack
       headers.each { |key, value|
         if key.downcase == 'content-length'
           ## There must not be a <tt>Content-Length</tt> header when the
-          ## +Status+ is 1xx, 204, 205 or 304.
+          ## +Status+ is 1xx, 204 or 304.
           assert("Content-Length header found in #{status} response, not allowed") {
             not Rack::Utils::STATUS_WITH_NO_ENTITY_BODY.include? status.to_i
           }
@@ -710,7 +710,7 @@ module Rack
         assert("Body yielded non-string value #{part.inspect}") {
           part.kind_of? String
         }
-        bytes += Rack::Utils.bytesize(part)
+        bytes += part.bytesize
         yield part
       }
       verify_content_length(bytes)
