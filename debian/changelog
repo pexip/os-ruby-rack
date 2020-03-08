@@ -1,3 +1,9 @@
+ruby-rack (2.0.6-3pexip1) pexip; urgency=medium
+
+  * Migrate to Buster
+
+ -- Vincent Sanders <vince@pexip.com>  Sun, 08 Mar 2020 09:54:40 +0000
+
 ruby-rack (2.0.6-3) unstable; urgency=medium
 
   * Team upload.
