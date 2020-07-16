@@ -1,3 +1,9 @@
+ruby-rack (2.0.6-3pexip2) pexip; urgency=medium
+
+  * Rebuild in buster environment
+
+ -- Steve McIntyre <steve.mcintyre@pexip.com>  Thu, 16 Jul 2020 06:41:10 +0000
+
 ruby-rack (2.0.6-3pexip1) pexip; urgency=medium
 
   * Migrate to Buster
