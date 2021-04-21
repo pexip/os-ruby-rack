@@ -1,3 +1,10 @@
+ruby-rack (2.0.6-3pexip3) pexip; urgency=medium
+
+  * Backport upstream test-suite fix to avoid failure when building
+    in non-init'd containers.
+
+ -- Mark Hymers <mark.hymers@pexip.com>  Wed, 21 Apr 2021 09:54:21 +0100
+
 ruby-rack (2.0.6-3pexip2) pexip; urgency=medium
 
   * Rebuild in buster environment
